@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch & Model Checkpoints
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.bin
+*.safetensors
+checkpoints/
+weights/
+pretrained/
+
+# Datasets and Cache
+*.npy
+*.npz
+*.h5
+*.hdf5
+data/
+datasets/
+cache/
+.cache/
+
+# Environments & IDEs
+.env
+.venv
+env/
+venv/
+ENV/
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs and WandB
+logs/
+*.log
+wandb/
