@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import numpy as np
 from PIL import Image
 from torchvision import transforms
@@ -12,7 +13,9 @@ from .reef_io import depth_paths, normalized_image_path
 NATIVE_SIZE = 518
 
 
-def resize_shorter_then_center_crop(img: Image.Image, size: int = NATIVE_SIZE) -> Image.Image:
+def resize_shorter_then_center_crop(
+    img: Image.Image, size: int = NATIVE_SIZE
+) -> Image.Image:
     """Resize shorter side to size, then center-crop to size x size."""
     return transforms.Compose(
         [
@@ -25,13 +28,22 @@ def resize_shorter_then_center_crop(img: Image.Image, size: int = NATIVE_SIZE) -
 class RGBDImageLoader:
     """Load exposure-normalized RGB and cached Depth-Anything-V2 maps."""
 
-    def __init__(self, campaign: str, deployment: str, native_size: int = NATIVE_SIZE, metric=False, processed=False):
+    def __init__(
+        self,
+        campaign: str,
+        deployment: str,
+        native_size: int = NATIVE_SIZE,
+        metric=False,
+        processed=False,
+    ):
         self.campaign = campaign
         self.deployment = deployment
         self.native_size = native_size
         self.label = "metric" if metric else "processed" if processed else None
 
-        print(f"Initializing RGBDImageLoader for {campaign}/{deployment} with label={self.label}...")
+        print(
+            f"Initializing RGBDImageLoader for {campaign}/{deployment} with label={self.label}..."
+        )
 
         npy_path, keys_path = depth_paths(campaign, deployment, self.label)
         if not npy_path.exists() or not keys_path.exists():

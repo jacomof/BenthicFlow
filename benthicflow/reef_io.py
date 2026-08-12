@@ -7,16 +7,18 @@ from typing import Iterator, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from . import DATA_ROOT, FEAT_ROOT, DATA_NORM_ROOT, DEPTH_ROOT
+from . import DATA_NORM_ROOT, DATA_ROOT, DEPTH_ROOT, FEAT_ROOT
 
 
-def iter_deployments(campaigns: Optional[Sequence[str]] = None) -> Iterator[tuple[str, str, Path, Path]]:
+def iter_deployments(
+    campaigns: Optional[Sequence[str]] = None,
+) -> Iterator[tuple[str, str, Path, Path]]:
     """Yield (campaign, deployment, manifest_path, image_dir) for each deployment."""
     print(f"iter_deployments: campaigns={campaigns}")
     if campaigns is None:
         pattern = str(DATA_ROOT / "*" / "*" / "manifest.csv")
     else:
-        pattern = None  
+        pattern = None
 
     print(f"iter_deployments: pattern={pattern}")
     if pattern is not None:
@@ -54,7 +56,7 @@ def save_features(path: Path, *, features: np.ndarray, df: pd.DataFrame) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         path,
-        features=features.astype(np.float16),    
+        features=features.astype(np.float16),
         keys=df["key"].astype(str).to_numpy(),
     )
 
@@ -78,32 +80,37 @@ def load_all_features() -> tuple[np.ndarray, list[tuple[str, str, int]]]:
     return np.concatenate(blocks, axis=0), sources
 
 
-def depth_paths(campaign: str, deployment: str, label: str=None) -> tuple[Path, Path]:
+def depth_paths(campaign: str, deployment: str, label: str = None) -> tuple[Path, Path]:
     """Paths to a deployment's uncompressed Depth-Anything-V2 maps and keys."""
-    
+
     if label:
-        base = Path(str(DEPTH_ROOT)+label) / campaign 
+        base = Path(str(DEPTH_ROOT) + label) / campaign
     else:
         base = DEPTH_ROOT / campaign
-        
+
     depths = base / f"{deployment}.npy"
     keys = base / f"{deployment}_keys.npy"
 
     return depths, keys
 
-def depth_path(campaign: str, deployment: str, label: str=None) -> Path:
+
+def depth_path(campaign: str, deployment: str, label: str = None) -> Path:
     """Base directory for one deployment's depth cache."""
     if label:
         return DEPTH_ROOT / campaign / f"{deployment}_{label}.npy"
     else:
         return DEPTH_ROOT / campaign / f"{deployment}.npy"
 
-def flat_depth_paths(campaign: str, deployment: str, label: str | None = None) -> tuple[Path, Path]:
+
+def flat_depth_paths(
+    campaign: str, deployment: str, label: str | None = None
+) -> tuple[Path, Path]:
     """Returns paths for the raw depth array and the corresponding keys."""
     suffix = f"_{label}" if label else ""
     depth_npy = DEPTH_ROOT / campaign / f"{deployment}{suffix}.npy"
     keys_npy = DEPTH_ROOT / campaign / f"{deployment}{suffix}_keys.npy"
     return depth_npy, keys_npy
+
 
 def save_depths(path: Path, *, depths: np.ndarray, keys: np.ndarray) -> None:
     """Cache normalized depth maps into memory-mappable uncompressed formats.

@@ -5,16 +5,17 @@ RAE latents with mask conditioning.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+
 import math
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 
-
 # ===========================================================================
 # Config
 # ===========================================================================
+
 
 @dataclass
 class MaskedCFMConfig:
@@ -31,6 +32,7 @@ class MaskedCFMConfig:
 # Positional + time embeddings
 # ===========================================================================
 
+
 def get_2d_sincos_pos_embed(embed_dim: int, grid_size: int) -> torch.Tensor:
     """2D sin-cos position embedding -> [grid*grid, embed_dim]."""
     assert embed_dim % 4 == 0, "embed_dim must be divisible by 4"
@@ -40,7 +42,7 @@ def get_2d_sincos_pos_embed(embed_dim: int, grid_size: int) -> torch.Tensor:
     def axis(p: torch.Tensor) -> torch.Tensor:
         d_quarter = embed_dim // 4
         omega = torch.arange(d_quarter, dtype=torch.float32) / d_quarter
-        omega = 1.0 / (10000 ** omega)
+        omega = 1.0 / (10000**omega)
         out = p.reshape(-1)[:, None] * omega[None, :]
         return torch.cat([out.sin(), out.cos()], dim=-1)
 
@@ -62,8 +64,7 @@ class TimestepEmbedder(nn.Module):
     def _sinusoidal(self, t: torch.Tensor) -> torch.Tensor:
         half = self.frequency_dim // 2
         freqs = torch.exp(
-            -math.log(10000)
-            * torch.arange(half, device=t.device).float() / half
+            -math.log(10000) * torch.arange(half, device=t.device).float() / half
         )
         args = t.float()[:, None] * freqs[None]
         return torch.cat([args.cos(), args.sin()], dim=-1)
@@ -76,6 +77,7 @@ class TimestepEmbedder(nn.Module):
 # DiT blocks
 # ===========================================================================
 
+
 def _modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
@@ -84,8 +86,9 @@ class DiTBlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, dropout=0.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-        self.attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout,
-                                          batch_first=True)
+        self.attn = nn.MultiheadAttention(
+            dim, num_heads, dropout=dropout, batch_first=True
+        )
         self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         hidden = int(dim * mlp_ratio)
         self.mlp = nn.Sequential(
@@ -129,38 +132,44 @@ class FinalLayer(nn.Module):
 # Masked CFM velocity model
 # ===========================================================================
 
+
 class MaskedCFM(nn.Module):
     """DiT velocity network. See module docstring."""
 
     def __init__(self, cfg: MaskedCFMConfig):
         super().__init__()
         self.cfg = cfg
-        in_dim = 2 * cfg.latent_dim + 1   # z_t, M*z_known_t, M
+        in_dim = 2 * cfg.latent_dim + 1  # z_t, M*z_known_t, M
 
         self.input_proj = nn.Linear(in_dim, cfg.model_dim)
         pos = get_2d_sincos_pos_embed(cfg.model_dim, cfg.grid_size)
         self.register_buffer("pos_embed", pos.unsqueeze(0), persistent=False)
         self.t_embed = TimestepEmbedder(cfg.model_dim)
-        self.blocks = nn.ModuleList([
-            DiTBlock(cfg.model_dim, cfg.num_heads, cfg.mlp_ratio, cfg.dropout)
-            for _ in range(cfg.depth)
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                DiTBlock(cfg.model_dim, cfg.num_heads, cfg.mlp_ratio, cfg.dropout)
+                for _ in range(cfg.depth)
+            ]
+        )
         self.final = FinalLayer(cfg.model_dim, cfg.latent_dim)
 
         self.register_buffer("latent_mean", torch.zeros(cfg.latent_dim))
-        self.register_buffer("latent_std",  torch.ones(cfg.latent_dim))
+        self.register_buffer("latent_std", torch.ones(cfg.latent_dim))
 
-    def normalize(self, z):    return (z - self.latent_mean) / self.latent_std
-    def denormalize(self, z):  return z * self.latent_std + self.latent_mean
+    def normalize(self, z):
+        return (z - self.latent_mean) / self.latent_std
+
+    def denormalize(self, z):
+        return z * self.latent_std + self.latent_mean
 
     def forward(self, z_t, t, mask, z_known):
         """Inputs:
-            z_t      [B, N, D]   noisy latent
-            t        [B]         in [0, 1]
-            mask     [B, N, 1]   1 where token is conditioned
-            z_known  [B, N, D]   already-noised conditioning at time t
-                                 (caller's responsibility; see cfm_loss
-                                 and cfm_sample for the noising)
+        z_t      [B, N, D]   noisy latent
+        t        [B]         in [0, 1]
+        mask     [B, N, 1]   1 where token is conditioned
+        z_known  [B, N, D]   already-noised conditioning at time t
+                             (caller's responsibility; see cfm_loss
+                             and cfm_sample for the noising)
         """
         cond = z_known * mask
         x = torch.cat([z_t, cond, mask], dim=-1)
@@ -175,9 +184,14 @@ class MaskedCFM(nn.Module):
 # Mask sampling
 # ===========================================================================
 
-def sample_rectangle_mask(B: int, grid: int = 16,
-                          p_uncond: float = 0.30, p_full: float = 0.0,
-                          device: str | torch.device = "cpu") -> torch.Tensor:
+
+def sample_rectangle_mask(
+    B: int,
+    grid: int = 16,
+    p_uncond: float = 0.30,
+    p_full: float = 0.0,
+    device: str | torch.device = "cpu",
+) -> torch.Tensor:
     """Random axis-aligned rectangle as the *known* region (M=1).
 
     Returns: [B, grid, grid, 1] float in {0, 1}.
@@ -190,8 +204,10 @@ def sample_rectangle_mask(B: int, grid: int = 16,
     ys = torch.arange(grid, device=device).view(1, grid, 1)
     xs = torch.arange(grid, device=device).view(1, 1, grid)
     mask = (
-        (ys >= y0.view(B, 1, 1)) & (ys < (y0 + h).view(B, 1, 1)) &
-        (xs >= x0.view(B, 1, 1)) & (xs < (x0 + w).view(B, 1, 1))
+        (ys >= y0.view(B, 1, 1))
+        & (ys < (y0 + h).view(B, 1, 1))
+        & (xs >= x0.view(B, 1, 1))
+        & (xs < (x0 + w).view(B, 1, 1))
     ).float()
 
     r = torch.rand(B, device=device).view(B, 1, 1)
@@ -205,9 +221,14 @@ def sample_rectangle_mask(B: int, grid: int = 16,
 # Training loss
 # ===========================================================================
 
-def cfm_loss(model: MaskedCFM, z1_norm: torch.Tensor,
-             p_uncond: float = 0.30, p_full: float = 0.0,
-             loss_on: str = "all") -> dict:
+
+def cfm_loss(
+    model: MaskedCFM,
+    z1_norm: torch.Tensor,
+    p_uncond: float = 0.30,
+    p_full: float = 0.0,
+    loss_on: str = "all",
+) -> dict:
     """Masked rectified-flow loss with noised conditioning.
 
     z1_norm: [B, N, D]  target latent, already in the model's normalized space.
@@ -221,8 +242,9 @@ def cfm_loss(model: MaskedCFM, z1_norm: torch.Tensor,
     device = z1_norm.device
 
     # Mask
-    mask = sample_rectangle_mask(B, grid=grid, p_uncond=p_uncond,
-                                 p_full=p_full, device=device)
+    mask = sample_rectangle_mask(
+        B, grid=grid, p_uncond=p_uncond, p_full=p_full, device=device
+    )
     mask = mask.view(B, N, 1)
 
     # Forward process: independent noise for z_t and for z_known_t
@@ -231,14 +253,14 @@ def cfm_loss(model: MaskedCFM, z1_norm: torch.Tensor,
     z0 = torch.randn_like(z1_norm)
     eps_cond = torch.randn_like(z1_norm)
 
-    zt          = (1.0 - t_) * z0       + t_ * z1_norm   # the target trajectory
-    z_known_t   = (1.0 - t_) * eps_cond + t_ * z1_norm   # the noised condition
-    v_target    = z1_norm - z0                            # rectified-flow target
+    zt = (1.0 - t_) * z0 + t_ * z1_norm  # the target trajectory
+    z_known_t = (1.0 - t_) * eps_cond + t_ * z1_norm  # the noised condition
+    v_target = z1_norm - z0  # rectified-flow target
 
     v_pred = model(zt, t, mask, z_known_t)
 
     if loss_on == "unknown":
-        w = 1.0 - mask                               # [B, N, 1]
+        w = 1.0 - mask  # [B, N, 1]
         denom = w.sum() * D + 1e-8
         loss = ((v_pred - v_target).pow(2) * w).sum() / denom
     elif loss_on == "all":
@@ -253,18 +275,21 @@ def cfm_loss(model: MaskedCFM, z1_norm: torch.Tensor,
 # Euler sampler with noised conditioning + anchored known tokens
 # ===========================================================================
 
+
 @torch.no_grad()
-def cfm_sample(model: MaskedCFM,
-               z_known_norm: torch.Tensor,
-               mask: torch.Tensor,
-               n_steps: int = 50,
-               anchor_known: bool = True) -> torch.Tensor:
+def cfm_sample(
+    model: MaskedCFM,
+    z_known_norm: torch.Tensor,
+    mask: torch.Tensor,
+    n_steps: int = 50,
+    anchor_known: bool = True,
+) -> torch.Tensor:
     """Generate a latent by Euler integration of the velocity field.
-Inputs in model's normalized space; caller denormalizes the return.
-z_known_norm: [B, N, D]   clean tokens (used only where mask=1)
-mask:         [B, N, 1]   1 = condition this token to z_known_norm
-At every step we noise z_known_norm to the current t and pass that
-"""
+    Inputs in model's normalized space; caller denormalizes the return.
+    z_known_norm: [B, N, D]   clean tokens (used only where mask=1)
+    mask:         [B, N, 1]   1 = condition this token to z_known_norm
+    At every step we noise z_known_norm to the current t and pass that
+    """
     device = z_known_norm.device
     B, N, D = z_known_norm.shape
     z = torch.randn(B, N, D, device=device)
@@ -293,19 +318,23 @@ At every step we noise z_known_norm to the current t and pass that
 # MultiDiffusion-style tiled sampler for panorama growth
 # ===========================================================================
 
+
 @torch.no_grad()
-def cfm_sample_tiled(model: MaskedCFM,
-                     canvas_known_norm: torch.Tensor,
-                     canvas_mask: torch.Tensor,
-                     tile: int = 16, stride: int = 8,
-                     n_steps: int = 50,
-                     anchor_known: bool = True) -> torch.Tensor:
+def cfm_sample_tiled(
+    model: MaskedCFM,
+    canvas_known_norm: torch.Tensor,
+    canvas_mask: torch.Tensor,
+    tile: int = 16,
+    stride: int = 8,
+    n_steps: int = 50,
+    anchor_known: bool = True,
+) -> torch.Tensor:
     """MultiDiffusion sampler over an arbitrarily large canvas.
-canvas_known_norm: [1, H, W, D]   normalized known content
-canvas_mask:       [1, H, W, 1]   1 where condition is provided
-At every Euler step we (a) noise the canvas's known content to t,
-(b) optionally anchor z's known tokens to that noised target, and
-"""
+    canvas_known_norm: [1, H, W, D]   normalized known content
+    canvas_mask:       [1, H, W, 1]   1 where condition is provided
+    At every Euler step we (a) noise the canvas's known content to t,
+    (b) optionally anchor z's known tokens to that noised target, and
+    """
     assert canvas_known_norm.shape[0] == 1, "tiled sampler is single-canvas"
     device = canvas_known_norm.device
     _, H, W, D = canvas_known_norm.shape
@@ -341,16 +370,16 @@ At every Euler step we (a) noise the canvas's known content to t,
 
         for y in y_origins:
             for x in x_origins:
-                z_tile = z[:, y:y + tile, x:x + tile, :]
-                k_tile = canvas_known_t[:, y:y + tile, x:x + tile, :]
-                m_tile = canvas_mask[:, y:y + tile, x:x + tile, :]
+                z_tile = z[:, y : y + tile, x : x + tile, :]
+                k_tile = canvas_known_t[:, y : y + tile, x : x + tile, :]
+                m_tile = canvas_mask[:, y : y + tile, x : x + tile, :]
                 z_flat = z_tile.reshape(1, tile * tile, D)
                 k_flat = k_tile.reshape(1, tile * tile, D)
                 m_flat = m_tile.reshape(1, tile * tile, 1)
                 v_flat = model(z_flat, t_cur.expand(1), m_flat, k_flat)
                 v_tile = v_flat.reshape(1, tile, tile, D)
-                v_sum[:, y:y + tile, x:x + tile, :] += v_tile
-                v_cnt[:, y:y + tile, x:x + tile, :] += 1.0
+                v_sum[:, y : y + tile, x : x + tile, :] += v_tile
+                v_cnt[:, y : y + tile, x : x + tile, :] += 1.0
 
         v = v_sum / v_cnt
         z = z + (t_next - t_cur) * v

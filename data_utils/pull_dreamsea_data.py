@@ -7,15 +7,20 @@ Outputs:
   data/<campaign>/<deployment>/manifest.csv   pose metadata
 """
 
-import os, csv, json, time, requests
+import csv
+import json
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+import requests
 from tqdm import tqdm
 
-API   = "https://squidle.org/api"
-ROOT  = Path(os.environ.get("REEF_DATA_SCRATCH_ROOT", "data"))
-TOKEN = os.environ.get("SQUIDLE_TOKEN")           # optional; higher rate limits
-HEAD  = {"X-auth-token": TOKEN} if TOKEN else {}
+API = "https://squidle.org/api"
+ROOT = Path(os.environ.get("REEF_DATA_SCRATCH_ROOT", "data"))
+TOKEN = os.environ.get("SQUIDLE_TOKEN")  # optional; higher rate limits
+HEAD = {"X-auth-token": TOKEN} if TOKEN else {}
 
 # ---- DreamSea-equivalent public subset (Sirius, 2009–2015) ----------------
 # (campaign_key, campaign_id) — IDs from discover_campaigns.py
@@ -23,13 +28,13 @@ CAMPAIGNS = [
     ("ScottReef200907", 20),
     ("ScottReef201108", 21),
     ("ScottReef201503", 22),
-    ("Batemans201011",   3),
-    ("Batemans201211",   4),
-    ("Batemans201411",   5),
+    ("Batemans201011", 3),
+    ("Batemans201211", 4),
+    ("Batemans201411", 5),
 ]
-PLATFORM_ID    = 1          # IMOS AUV Sirius. Set to None to keep all platforms.
-USE_THUMBNAILS = False       # True ≈ 5 KB/img, False = full-res ≈ 500 KB/img.
-MAX_WORKERS    = 16
+PLATFORM_ID = 1  # IMOS AUV Sirius. Set to None to keep all platforms.
+USE_THUMBNAILS = False  # True ≈ 5 KB/img, False = full-res ≈ 500 KB/img.
+MAX_WORKERS = 16
 # ---------------------------------------------------------------------------
 
 
@@ -43,7 +48,7 @@ def get(url, params=None, retries=5):
         except Exception:
             if k == retries - 1:
                 raise
-            time.sleep(2 ** k)
+            time.sleep(2**k)
 
 
 def deployments_for_campaign(camp_id):
@@ -55,8 +60,10 @@ def deployments_for_campaign(camp_id):
 
     out, page = [], 1
     while True:
-        j = get(f"{API}/deployment",
-                {"q": json.dumps(q), "page": page, "results_per_page": 200})
+        j = get(
+            f"{API}/deployment",
+            {"q": json.dumps(q), "page": page, "results_per_page": 200},
+        )
         out += j["objects"]
         if page >= j["total_pages"]:
             break
@@ -69,8 +76,9 @@ def media_for_deployment(dep_id):
     q = {"filters": [{"name": "deployment_id", "op": "eq", "val": dep_id}]}
     out, page = [], 1
     while True:
-        j = get(f"{API}/media",
-                {"q": json.dumps(q), "page": page, "results_per_page": 500})
+        j = get(
+            f"{API}/media", {"q": json.dumps(q), "page": page, "results_per_page": 500}
+        )
         out += j["objects"]
         if page >= j["total_pages"]:
             break
@@ -112,16 +120,18 @@ def process_deployment(camp_key, dep):
     rows = []
     for m in media:
         pose = m.get("pose") or {}
-        rows.append({
-            "media_id":  m["id"],
-            "key":       m["key"],
-            "url":       m["path_best_thm"] if USE_THUMBNAILS else m["path_best"],
-            "lat":       pose.get("lat"),
-            "lon":       pose.get("lon"),
-            "alt":       pose.get("alt"),
-            "depth":     pose.get("dep"),
-            "timestamp": m.get("timestamp"),
-        })
+        rows.append(
+            {
+                "media_id": m["id"],
+                "key": m["key"],
+                "url": m["path_best_thm"] if USE_THUMBNAILS else m["path_best"],
+                "lat": pose.get("lat"),
+                "lon": pose.get("lon"),
+                "alt": pose.get("alt"),
+                "depth": pose.get("dep"),
+                "timestamp": m.get("timestamp"),
+            }
+        )
 
     # Write manifest first so metadata survives even if downloads fail
     with open(out_dir / "manifest.csv", "w", newline="") as f:
@@ -131,10 +141,15 @@ def process_deployment(camp_key, dep):
 
     # Parallel image download
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futs = [ex.submit(download_one, r["url"], img_dir / f"{r['key']}.jpg")
-                for r in rows]
-        for _ in tqdm(as_completed(futs), total=len(futs),
-                      desc=f"{camp_key}/{dep_key}", leave=False):
+        futs = [
+            ex.submit(download_one, r["url"], img_dir / f"{r['key']}.jpg") for r in rows
+        ]
+        for _ in tqdm(
+            as_completed(futs),
+            total=len(futs),
+            desc=f"{camp_key}/{dep_key}",
+            leave=False,
+        ):
             pass
 
 

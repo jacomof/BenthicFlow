@@ -1,20 +1,18 @@
-#!/usr/bin/env python3
 """Lift a single RGB image into a 2.5D point cloud / Gaussian surfel splat.
 Pipeline:
 RGB image
 This is intended for method-overview figures, not metric reconstruction.
 """
 
-import json
 import argparse
+import json
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 from PIL import Image
-
 
 SH_C0 = 0.28209479177387814
 
@@ -22,6 +20,7 @@ SH_C0 = 0.28209479177387814
 # =============================================================================
 # I/O and Depth Anything
 # =============================================================================
+
 
 def load_rgb(path: Path, max_side: int | None, device: str):
     img = Image.open(path).convert("RGB")
@@ -55,11 +54,11 @@ def estimate_depth_anything(
     invert: bool = True,
 ):
     """Depth Anything output is treated as relative disparity / inverse depth.
-We first normalize the raw prediction to disparity01 in [0,1].
-Then, by default, invert it:
-depth01 = 1 - disparity01
-So larger depth01 means farther away in the later unprojection.
-"""
+    We first normalize the raw prediction to disparity01 in [0,1].
+    Then, by default, invert it:
+    depth01 = 1 - disparity01
+    So larger depth01 means farther away in the later unprojection.
+    """
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
     processor = AutoImageProcessor.from_pretrained(model_id)
@@ -92,6 +91,7 @@ So larger depth01 means farther away in the later unprojection.
 # =============================================================================
 # Geometry
 # =============================================================================
+
 
 def make_K(fx, fy, w, h, device):
     return torch.tensor(
@@ -182,6 +182,7 @@ def tilt_viewmat(points, tilt_deg, azim_deg, device):
 # =============================================================================
 # Surface-aligned surfel construction
 # =============================================================================
+
 
 def _sqrt_pos(x):
     return torch.sqrt(torch.clamp(x, min=0.0))
@@ -327,6 +328,7 @@ def build_surfels(
 # Rendering with gsplat
 # =============================================================================
 
+
 def render_gaussians(
     g,
     viewmat,
@@ -420,6 +422,7 @@ def render_view(
 # PLY writers
 # =============================================================================
 
+
 def write_gaussian_ply(path, g):
     means = g["means"].detach().cpu().numpy().astype(np.float32)
     cols = g["colors"].detach().cpu().numpy().astype(np.float32)
@@ -435,12 +438,23 @@ def write_gaussian_ply(path, g):
     op_logit = np.log(opc / (1 - opc))
 
     props = [
-        "x", "y", "z",
-        "nx", "ny", "nz",
-        "f_dc_0", "f_dc_1", "f_dc_2",
+        "x",
+        "y",
+        "z",
+        "nx",
+        "ny",
+        "nz",
+        "f_dc_0",
+        "f_dc_1",
+        "f_dc_2",
         "opacity",
-        "scale_0", "scale_1", "scale_2",
-        "rot_0", "rot_1", "rot_2", "rot_3",
+        "scale_0",
+        "scale_1",
+        "scale_2",
+        "rot_0",
+        "rot_1",
+        "rot_2",
+        "rot_3",
     ]
 
     header = (
@@ -516,6 +530,7 @@ def write_pointcloud_ply(path, points, colors):
 # Figures and metrics
 # =============================================================================
 
+
 def psnr(a, b):
     mse = F.mse_loss(a, b)
     return 99.0 if mse < 1e-12 else float(-10.0 * torch.log10(mse))
@@ -526,7 +541,7 @@ def ssim(a_hw3, b_hw3, ws=11, sigma=1.5):
     b = b_hw3.permute(2, 0, 1).unsqueeze(0)
 
     coords = torch.arange(ws, device=a.device) - ws // 2
-    gk = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
+    gk = torch.exp(-(coords**2) / (2 * sigma**2))
     gk = gk / gk.sum()
 
     win = (gk[:, None] * gk[None, :]).view(1, 1, ws, ws)
@@ -542,10 +557,10 @@ def ssim(a_hw3, b_hw3, ws=11, sigma=1.5):
     vb = F.conv2d(b * b, win, padding=pad, groups=C) - mu_b * mu_b
     cov = F.conv2d(a * b, win, padding=pad, groups=C) - mu_a * mu_b
 
-    C1, C2 = 0.01 ** 2, 0.03 ** 2
+    C1, C2 = 0.01**2, 0.03**2
 
     score = ((2 * mu_a * mu_b + C1) * (2 * cov + C2)) / (
-        (mu_a ** 2 + mu_b ** 2 + C1) * (va + vb + C2)
+        (mu_a**2 + mu_b**2 + C1) * (va + vb + C2)
     )
 
     return float(score.mean())
@@ -588,6 +603,7 @@ def save_tensor_image(path, x, cmap=None):
 # Driver
 # =============================================================================
 
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Lift one image with Depth Anything into a point cloud / surfel splat."
@@ -610,15 +626,24 @@ def parse_args():
         help="Resize longest image side before depth/lifting. Use 0 to keep original.",
     )
 
-    p.add_argument("--no-invert", action="store_true",
-                   help="Disable disparity-to-depth inversion.")
+    p.add_argument(
+        "--no-invert", action="store_true", help="Disable disparity-to-depth inversion."
+    )
 
     # Geometry / relief.
-    p.add_argument("--focal", type=float, default=None,
-                   help="Focal length in pixels. Default: image width.")
+    p.add_argument(
+        "--focal",
+        type=float,
+        default=None,
+        help="Focal length in pixels. Default: image width.",
+    )
     p.add_argument("--z-near", type=float, default=2.0)
-    p.add_argument("--z-span", type=float, default=0.45,
-                   help="Relief amplitude. Larger means more visible 3D shape.")
+    p.add_argument(
+        "--z-span",
+        type=float,
+        default=0.45,
+        help="Relief amplitude. Larger means more visible 3D shape.",
+    )
 
     # Surfel construction.
     p.add_argument("--k-overlap", type=float, default=0.75)
@@ -630,8 +655,9 @@ def parse_args():
     # Rendering.
     p.add_argument("--render-max-side", type=int, default=1200)
     p.add_argument("--ss", type=int, default=2)
-    p.add_argument("--rasterize-mode", choices=["classic", "antialiased"],
-                   default="antialiased")
+    p.add_argument(
+        "--rasterize-mode", choices=["classic", "antialiased"], default="antialiased"
+    )
     p.add_argument("--bg", type=float, nargs=3, default=[0.0, 0.0, 0.0])
     p.add_argument("--tilt-deg", type=float, default=20.0)
     p.add_argument("--azimuth-deg", type=float, default=15.0)
@@ -697,7 +723,9 @@ def main():
 
     # Save raw assets.
     save_tensor_image(out_dir / "input_rgb.png", rgb)
-    save_tensor_image(out_dir / "depth_anything_disparity01.png", disparity01, cmap="gray")
+    save_tensor_image(
+        out_dir / "depth_anything_disparity01.png", disparity01, cmap="gray"
+    )
     save_tensor_image(out_dir / "depth01_inverted.png", depth01, cmap="gray")
 
     write_pointcloud_ply(out_dir / "pointcloud.ply", points, rgb)
@@ -795,7 +823,9 @@ def main():
         "z_near": float(args.z_near),
         "z_span": float(args.z_span),
         "depth_inverted": bool(not args.no_invert),
-        "pointcloud_ply_mb": round((out_dir / "pointcloud.ply").stat().st_size / 1e6, 3),
+        "pointcloud_ply_mb": round(
+            (out_dir / "pointcloud.ply").stat().st_size / 1e6, 3
+        ),
         "surfels_ply_mb": round((out_dir / "surfels.ply").stat().st_size / 1e6, 3),
         "front_psnr": round(psnr(front_native, rgb), 3),
         "front_ssim": round(ssim(front_native, rgb), 4),
@@ -808,7 +838,9 @@ def main():
 
     print(json.dumps(metrics, indent=2))
     print(f"\nDone. Outputs written to: {out_dir}")
-    print("Open surfels.ply in SuperSplat, or use panel.png / beauty_rgba.png for the method overview.")
+    print(
+        "Open surfels.ply in SuperSplat, or use panel.png / beauty_rgba.png for the method overview."
+    )
 
 
 if __name__ == "__main__":

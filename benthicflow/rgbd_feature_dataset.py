@@ -47,7 +47,9 @@ class RGBDFeatureDataset(Dataset):
 
         feats_path = feature_path(campaign, deployment)
         if not feats_path.exists():
-            raise FileNotFoundError(f"Missing feature cache for {campaign}/{deployment}: {feats_path}")
+            raise FileNotFoundError(
+                f"Missing feature cache for {campaign}/{deployment}: {feats_path}"
+            )
 
         feat_npz = np.load(feats_path)
         self._features = feat_npz["features"]
@@ -57,12 +59,19 @@ class RGBDFeatureDataset(Dataset):
         depth_keys = self._loader.list_keys()
         self._keys = [k for k in depth_keys if k in self._feat_key_to_idx]
         if not self._keys:
-            raise SystemExit("No overlapping keys between depth cache and feature cache.")
+            raise SystemExit(
+                "No overlapping keys between depth cache and feature cache."
+            )
 
     def __len__(self) -> int:
         return len(self._keys)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, str] | Tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+    def __getitem__(
+        self, index: int
+    ) -> (
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, str]
+        | Tuple[np.ndarray, np.ndarray, np.ndarray, str]
+    ):
         key = self._keys[index]
         rgb, depth = self._loader.load(key, align_rgb=self.align_rgb)
         feat = np.asarray(self._features[self._feat_key_to_idx[key]], dtype=np.float32)

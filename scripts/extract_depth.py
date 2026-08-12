@@ -1,9 +1,9 @@
 """Extract Depth-Anything-V2 depth maps natively at 518x518 from raw directories.
 
-Automatically crawls REEF_SCRATCH_ROOT/data_normalized and extracts depth maps 
+Automatically crawls REEF_SCRATCH_ROOT/data_normalized and extracts depth maps
 for all discovered campaigns and deployments.
 
-Outputs raw, uncompressed .npy files to a flat hierarchy to prevent SLURM 
+Outputs raw, uncompressed .npy files to a flat hierarchy to prevent SLURM
 CPU-RAM OOM kills during multiprocessing DataLoader reads.
 """
 
@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import torch.nn.functional as F
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
@@ -25,10 +25,12 @@ from tqdm import tqdm
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRATCH_ROOT = Path(os.environ.get(
-    "REEF_SCRATCH_ROOT",
-    PROJECT_ROOT / "scratch",
-))
+SCRATCH_ROOT = Path(
+    os.environ.get(
+        "REEF_SCRATCH_ROOT",
+        PROJECT_ROOT / "scratch",
+    )
+)
 
 DATA_ROOT = Path("PROJECT_ROOT") / "data_normalized"
 DEPTH_ROOT = SCRATCH_ROOT / "depth"
@@ -42,13 +44,13 @@ NATIVE_SIZE = 518
 
 VARIANT_REPOS = {
     "Small": "depth-anything/Depth-Anything-V2-Small-hf",
-    "Base":  "depth-anything/Depth-Anything-V2-Base-hf",
+    "Base": "depth-anything/Depth-Anything-V2-Base-hf",
     "Large": "depth-anything/Depth-Anything-V2-Large-hf",
 }
 
 VARIANT_REPOS_METRIC = {
     "Small": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf",
-    "Base":  "depth-anything/Depth-Anything-V2-Metric-Outdoor-Base-hf",
+    "Base": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Base-hf",
     "Large": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Large-hf",
 }
 
@@ -87,7 +89,10 @@ def load_model(variant: str = "Large", metric: bool = False, processed: bool = F
 # Path handling
 # ============================================================================
 
-def flat_depth_paths(campaign: str, deployment: str, label: str | None = None) -> tuple[Path, Path]:
+
+def flat_depth_paths(
+    campaign: str, deployment: str, label: str | None = None
+) -> tuple[Path, Path]:
     """Returns paths for the raw depth array and the corresponding keys."""
     suffix = f"_{label}" if label else ""
     depth_npy = DEPTH_ROOT / campaign / f"{deployment}{suffix}.npy"
@@ -105,16 +110,16 @@ def crawl_data_directory() -> dict[tuple[str, str], list[Path]]:
         if not campaign_dir.is_dir():
             continue
         campaign = campaign_dir.name
-        
+
         for dep_dir in campaign_dir.iterdir():
             if not dep_dir.is_dir():
                 continue
             deployment = dep_dir.name
-            
+
             images = list(dep_dir.glob("*.jpg")) + list(dep_dir.glob("*.png"))
             if images:
                 deployments[(campaign, deployment)] = images
-                
+
     return deployments
 
 
@@ -122,19 +127,25 @@ def crawl_data_directory() -> dict[tuple[str, str], list[Path]]:
 # Preprocessing
 # ============================================================================
 
-def resize_shorter_then_center_crop(img: Image.Image, size: int = NATIVE_SIZE) -> Image.Image:
+
+def resize_shorter_then_center_crop(
+    img: Image.Image, size: int = NATIVE_SIZE
+) -> Image.Image:
     """Resize shorter side to `size`, then center-crop to size x size.
     Must match RGB preprocessing used elsewhere to prevent drift.
     """
-    return transforms.Compose([
-        transforms.Resize(size, antialias=True),
-        transforms.CenterCrop(size),
-    ])(img)
+    return transforms.Compose(
+        [
+            transforms.Resize(size, antialias=True),
+            transforms.CenterCrop(size),
+        ]
+    )(img)
 
 
 # ============================================================================
 # Dataset
 # ============================================================================
+
 
 class DirectoryRGBDataset(Dataset):
     """Yields preprocessed 518x518 PIL images directly from a list of Paths."""
@@ -166,6 +177,7 @@ def collate(batch):
 # ============================================================================
 # Depth post-processing
 # ============================================================================
+
 
 def resize_depth_to_native(depth: np.ndarray) -> np.ndarray:
     """Resize a HxW depth array to NATIVE_SIZE x NATIVE_SIZE without cv2."""
@@ -207,6 +219,7 @@ def normalize_depth(depth: np.ndarray) -> np.ndarray:
 # ============================================================================
 # Processing
 # ============================================================================
+
 
 def process_deployment(
     run,
@@ -278,6 +291,7 @@ def process_deployment(
 # ============================================================================
 # Driver
 # ============================================================================
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -351,9 +365,7 @@ def main():
             print(f"skip cached {depth_path.name}")
             continue
 
-        print(
-            f"\nExtracting depth: {campaign} / {deployment} / N={len(image_paths)}"
-        )
+        print(f"\nExtracting depth: {campaign} / {deployment} / N={len(image_paths)}")
 
         process_deployment(
             run,

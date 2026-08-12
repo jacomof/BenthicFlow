@@ -4,6 +4,7 @@
 # '-dpf'-suffixed data roots. Forces REEF_VARIANT=dpf so REEF resolves
 # features-dpf/, depth-dpf/, rgb-dpf/, checkpoints-dpf/, data_normalized-dpf/.
 import os as _os
+
 _os.environ["BENTHICFLOW_VARIANT"] = "dpf"
 _os.environ["REEF_VARIANT"] = "dpf"
 
@@ -28,7 +29,13 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
 
-from benthicflow import FEAT_ROOT, DATA_NORM_ROOT, PROJECT_ROOT, SCRATCH_ROOT, DEPTH_ROOT
+from benthicflow import (
+    DATA_NORM_ROOT,
+    DEPTH_ROOT,
+    FEAT_ROOT,
+    PROJECT_ROOT,
+    SCRATCH_ROOT,
+)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -55,15 +62,19 @@ def load_dinov2(variant: str = "dinov2_vitb14"):
 
 class DirectoryImagesNative(Dataset):
     """Yields preprocessed images directly from a list of Path objects."""
+
     def __init__(self, image_paths: list[Path]):
         self.image_paths = image_paths
-        self.tfm = transforms.Compose([
-            transforms.Resize(NATIVE_SIZE, antialias=True),
-            transforms.CenterCrop(NATIVE_SIZE),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-        ])
+        self.tfm = transforms.Compose(
+            [
+                transforms.Resize(NATIVE_SIZE, antialias=True),
+                transforms.CenterCrop(NATIVE_SIZE),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
 
     def __len__(self):
         return len(self.image_paths)
@@ -75,7 +86,7 @@ class DirectoryImagesNative(Dataset):
             return self.tfm(img), i, True
         except Exception as e:
             print(f"Failed to load image: {path} ({e})")
-            #return torch.zeros(3, NATIVE_SIZE, NATIVE_SIZE), i, False
+            # return torch.zeros(3, NATIVE_SIZE, NATIVE_SIZE), i, False
             raise e  # Raise the exception to halt execution if an image fails to load
 
 
@@ -123,10 +134,12 @@ def extract_deployment(
 
     valid_feats = feats[valid]
     # We use the filename (e.g., 'PR_001.jpg') as the definitive key for alignment later
-    valid_keys = np.array([p.name for i, p in enumerate(image_paths) if valid[i]], dtype=str)
+    valid_keys = np.array(
+        [p.name for i, p in enumerate(image_paths) if valid[i]], dtype=str
+    )
 
     feat_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Save as raw, uncompressed binary arrays
     np.save(feat_path, valid_feats)
     np.save(keys_path, valid_keys)
@@ -145,12 +158,12 @@ def crawl_data_directory() -> dict[tuple[str, str], list[Path]]:
         if not campaign_dir.is_dir():
             continue
         campaign = campaign_dir.name
-        
+
         for dep_dir in campaign_dir.iterdir():
             if not dep_dir.is_dir():
                 continue
             deployment = dep_dir.name
-            
+
             images = list(dep_dir.glob("*.jpg")) + list(dep_dir.glob("*.png"))
             if images:
                 deployments[(campaign, deployment)] = images

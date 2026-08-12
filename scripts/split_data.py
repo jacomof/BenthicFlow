@@ -1,10 +1,8 @@
-"""Split the normalized data into train/val/test CSVs.
-"""
+"""Split the normalized data into train/val/test CSVs."""
 
 import csv
-from pathlib import Path
 import random
-
+from pathlib import Path
 
 seed = 42
 
@@ -26,13 +24,16 @@ def write_split_csv(rows, output_path: Path):
 def build_rows(deployment_path: Path, campaign_name: str):
     rows = []
     for file_path in iter_files(deployment_path):
-        rows.append([
-            file_path.stem,
-            campaign_name,
-            deployment_path.name,
-            str(file_path),
-        ])
+        rows.append(
+            [
+                file_path.stem,
+                campaign_name,
+                deployment_path.name,
+                str(file_path),
+            ]
+        )
     return rows
+
 
 if __name__ == "__main__":
     random.seed(seed)
@@ -73,12 +74,17 @@ if __name__ == "__main__":
     print("Selecting training deployments...")
     for dir in data_path.iterdir():
         deployments = list(dir.iterdir())
-        deployments = [d for d in deployments if d not in selected_deployments_val and d not in selected_deployments_test]
-        print(f"Selected training deployments from {dir.name}: {[d.name for d in deployments]}")
+        deployments = [
+            d
+            for d in deployments
+            if d not in selected_deployments_val and d not in selected_deployments_test
+        ]
+        print(
+            f"Selected training deployments from {dir.name}: {[d.name for d in deployments]}"
+        )
         for selected_deployment_train in deployments:
             train_rows.extend(build_rows(selected_deployment_train, dir.name))
     print("Finished collecting training rows.")
-
 
     output_dir = Path("./data_split")
     write_split_csv(train_rows, output_dir / "train.csv")

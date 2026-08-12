@@ -6,26 +6,33 @@ to evaluate MultiDiffusion spatial stitching smoothness.
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import argparse
 import json
 import time
+
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
-from benthicflow import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT, SCRATCH_NODE_ROOT, RGB_ROOT, FEAT_ROOT
-from models.unet_cfm import UNetCFM
-from scripts.train_cfm_cfg import load_rae_frozen
-from scripts.test_panorama import (
-    sample_conditioning, GRID, CFM_RUN_NAME, RAE_CKPT,
+from benthicflow import (
+    CKPT_ROOT,
+    FEAT_ROOT,
+    FIG_ROOT,
+    RGB_ROOT,
+    SCRATCH_NODE_ROOT,
+    SCRATCH_ROOT,
 )
+from models.unet_cfm import UNetCFM
+from scripts.test_panorama import CFM_RUN_NAME, GRID, RAE_CKPT, sample_conditioning
+from scripts.train_cfm_cfg import load_rae_frozen
 
 TOP_LEFT_CAMPAIGN = "ScottReef201503"
 TOP_RIGHT_CAMPAIGN = "Batemans201011"
 BOTTOM_LEFT_CAMPAIGN = "Hawaii201801"
-BOTTOM_RIGHT_CAMPAIGN = "ScottReef201108" 
+BOTTOM_RIGHT_CAMPAIGN = "ScottReef201108"
 
 
 from tqdm import tqdm
@@ -61,28 +68,44 @@ def _bilerp_cond(x0, y0, grid, W, H, cond_tl, cond_tr, cond_bl, cond_br):
 
     cond_tl/tr/bl/br: [B, 768] (one corner condition per image in the batch).
     """
-    ax = (x0 + grid / 2) / W                                              # 0=left .. 1=right
-    ay = (y0 + grid / 2) / H                                              # 0=top .. 1=bottom
-    return ((1.0 - ax) * (1.0 - ay) * cond_tl
-           + ax * (1.0 - ay) * cond_tr
-           + (1.0 - ax) * ay * cond_bl
-           + ax * ay * cond_br)
+    ax = (x0 + grid / 2) / W  # 0=left .. 1=right
+    ay = (y0 + grid / 2) / H  # 0=top .. 1=bottom
+    return (
+        (1.0 - ax) * (1.0 - ay) * cond_tl
+        + ax * (1.0 - ay) * cond_tr
+        + (1.0 - ax) * ay * cond_bl
+        + ax * ay * cond_br
+    )
 
 
 @torch.no_grad()
-def generate_grid(model, rae, cond_tl, cond_tr, cond_bl, cond_br, scale=3,
-                  n_steps=100, stride=8, cfg_scale=3.0, temperature=1.0,
-                  batch_size=64, decode_batch_size=None, use_hann=True, device="cuda"):
+def generate_grid(
+    model,
+    rae,
+    cond_tl,
+    cond_tr,
+    cond_bl,
+    cond_br,
+    scale=3,
+    n_steps=100,
+    stride=8,
+    cfg_scale=3.0,
+    temperature=1.0,
+    batch_size=64,
+    decode_batch_size=None,
+    use_hann=True,
+    device="cuda",
+):
     """2D MultiDiffusion: integrate a square [grid*scale, grid*scale] latent
-canvas with overlapping windows sliding in *both* x and y, blended with a
-separable Hann window. Conditioning is bilinearly interpolated between the
-four corner seeds (top-left, top-right, bottom-left, bottom-right), so it
-varies along both x and y instead of being row-independent.
-"""
+    canvas with overlapping windows sliding in *both* x and y, blended with a
+    separable Hann window. Conditioning is bilinearly interpolated between the
+    four corner seeds (top-left, top-right, bottom-left, bottom-right), so it
+    varies along both x and y instead of being row-independent.
+    """
     grid, D = GRID, model.latent_dim
     B = cond_tl.shape[0]
     H = W = grid * scale
-    null = model.null_cond.unsqueeze(0)                                  # [1, 768]
+    null = model.null_cond.unsqueeze(0)  # [1, 768]
 
     # Separable Hann-like 2D blend window so overlapping tiles fuse smoothly.
     # use_hann=False -> uniform (box) window: equal-weight averaging over the
@@ -103,10 +126,12 @@ varies along both x and y instead of being row-independent.
     # Flatten (window, image) into one static task pool: (b, y0, x0, cond_vec).
     # Static across steps (only the `x` crop depends on the step), so built once.
     tasks = []
-    for (y0, x0) in windows:
-        cond_w = _bilerp_cond(x0, y0, grid, W, H, cond_tl, cond_tr, cond_bl, cond_br)  # [B, 768]
+    for y0, x0 in windows:
+        cond_w = _bilerp_cond(
+            x0, y0, grid, W, H, cond_tl, cond_tr, cond_bl, cond_br
+        )  # [B, 768]
         for b in range(B):
-            tasks.append((b, y0, x0, cond_w[b:b + 1]))
+            tasks.append((b, y0, x0, cond_w[b : b + 1]))
 
     step_desc = f"generate_grid stride={stride} scale={scale}"
     for i in tqdm(range(n_steps), desc=step_desc, total=n_steps):
@@ -115,26 +140,35 @@ varies along both x and y instead of being row-independent.
         wacc = torch.zeros(B, 1, H, W, device=device)
 
         for c0 in range(0, len(tasks), batch_size):
-            chunk = tasks[c0:c0 + batch_size]
+            chunk = tasks[c0 : c0 + batch_size]
             n = len(chunk)
 
             xc_batch = torch.cat(
-                [x[b:b + 1, :, y0:y0 + grid, x0:x0 + grid] for (b, y0, x0, _) in chunk], dim=0)
-            cond_batch = torch.cat([cv for (_, _, _, cv) in chunk], dim=0)   # [n, 768]
+                [
+                    x[b : b + 1, :, y0 : y0 + grid, x0 : x0 + grid]
+                    for (b, y0, x0, _) in chunk
+                ],
+                dim=0,
+            )
+            cond_batch = torch.cat([cv for (_, _, _, cv) in chunk], dim=0)  # [n, 768]
 
             if cfg_scale != 1.0:
-                xc_in = torch.cat([xc_batch, xc_batch], dim=0)          # [2n, D, grid, grid]
+                xc_in = torch.cat([xc_batch, xc_batch], dim=0)  # [2n, D, grid, grid]
                 cond_in = torch.cat([cond_batch, null.expand(n, -1)], dim=0)
                 t_in = t.expand(2 * n)
                 v_pred = model(xc_in, t_in, cond_in)
                 v_cond, v_uncond = v_pred.chunk(2, dim=0)
-                v_batch = v_uncond + cfg_scale * (v_cond - v_uncond)     # [n, D, grid, grid]
+                v_batch = v_uncond + cfg_scale * (
+                    v_cond - v_uncond
+                )  # [n, D, grid, grid]
             else:
                 v_batch = model(xc_batch, t.expand(n), cond_batch)
 
             for k, (b, y0, x0, _) in enumerate(chunk):
-                vel[b:b + 1, :, y0:y0 + grid, x0:x0 + grid] += v_batch[k:k + 1] * win2d
-                wacc[b:b + 1, :, y0:y0 + grid, x0:x0 + grid] += win2d
+                vel[b : b + 1, :, y0 : y0 + grid, x0 : x0 + grid] += (
+                    v_batch[k : k + 1] * win2d
+                )
+                wacc[b : b + 1, :, y0 : y0 + grid, x0 : x0 + grid] += win2d
 
         x = x + (vel / (wacc + 1e-8)) * dt
 
@@ -147,10 +181,10 @@ varies along both x and y instead of being row-independent.
     dbs = decode_batch_size or batch_size
     outs = []
     for i in range(0, B, dbs):
-        z = model.denormalize(x[i:i + dbs])                             # [b, D, H, W]
-        fused = z.permute(0, 2, 3, 1).contiguous()                      # [b, H, W, D]
-        outs.append(rae.decoder(fused))                                 # [b, 4, H*14, W*14]
-    rgbd = torch.cat(outs, dim=0)                                       # [B, 4, H*14, W*14]
+        z = model.denormalize(x[i : i + dbs])  # [b, D, H, W]
+        fused = z.permute(0, 2, 3, 1).contiguous()  # [b, H, W, D]
+        outs.append(rae.decoder(fused))  # [b, 4, H*14, W*14]
+    rgbd = torch.cat(outs, dim=0)  # [B, 4, H*14, W*14]
     return rgbd[:, :3].clamp(0, 1), rgbd[:, 3:4].clamp(0, 1)
 
 
@@ -190,10 +224,10 @@ def gradient_profile(img_chw, axis):
     Averaged over channels and the other spatial axis.
     """
     if axis == 2:
-        g = (img_chw[:, :, 1:] - img_chw[:, :, :-1]).abs()   # [C, H, Wpx-1]
-        return g.mean(dim=(0, 1)).cpu().numpy()              # [Wpx-1]
-    g = (img_chw[:, 1:, :] - img_chw[:, :-1, :]).abs()       # [C, Hpx-1, W]
-    return g.mean(dim=(0, 2)).cpu().numpy()                  # [Hpx-1]
+        g = (img_chw[:, :, 1:] - img_chw[:, :, :-1]).abs()  # [C, H, Wpx-1]
+        return g.mean(dim=(0, 1)).cpu().numpy()  # [Wpx-1]
+    g = (img_chw[:, 1:, :] - img_chw[:, :-1, :]).abs()  # [C, Hpx-1, W]
+    return g.mean(dim=(0, 2)).cpu().numpy()  # [Hpx-1]
 
 
 def seam_ratio_1d(prof, seams_px, band, edge_margin):
@@ -204,14 +238,14 @@ def seam_ratio_1d(prof, seams_px, band, edge_margin):
     (independent of overlap), so the ratio is not inflated by wider overlaps.
     """
     L = prof.shape[0]
-    locs = np.arange(L) + 0.5                                 # location of each diff
+    locs = np.arange(L) + 0.5  # location of each diff
     seam_mask = np.zeros(L, dtype=bool)
     for s in seams_px:
         seam_mask |= np.abs(locs - s) <= band
 
     interior = (locs >= edge_margin) & (locs <= (L + 1) - edge_margin)
     base_mask = interior & ~seam_mask
-    seam_mask = interior & seam_mask                          # keep seams off borders too
+    seam_mask = interior & seam_mask  # keep seams off borders too
 
     if seam_mask.sum() == 0 or base_mask.sum() == 0:
         return float("nan"), seam_mask, base_mask
@@ -226,8 +260,9 @@ def seam_gradient_ratio(img_chw, seams_px, band, edge_margin):
     rx, smx, bmx = seam_ratio_1d(prof_x, seams_px, band, edge_margin)
     ry, smy, bmy = seam_ratio_1d(prof_y, seams_px, band, edge_margin)
     combined = float(np.nanmean([rx, ry]))
-    diag = dict(prof_x=prof_x, prof_y=prof_y, smx=smx, bmx=bmx, smy=smy, bmy=bmy,
-                rx=rx, ry=ry)
+    diag = dict(
+        prof_x=prof_x, prof_y=prof_y, smx=smx, bmx=bmx, smy=smy, bmy=bmy, rx=rx, ry=ry
+    )
     return combined, diag
 
 
@@ -255,15 +290,28 @@ def plot_diagnostic(pano_rgb, seams_px, diag, ratio, stride, overlap_pct, out_pa
         for s in seams_px:
             ax_img.axvline(s, color="cyan", ls="--", lw=0.6, alpha=0.8)
             ax_img.axhline(s, color="cyan", ls="--", lw=0.6, alpha=0.8)
-        ax_img.set_title(f"stride {stride} ({overlap_pct:.1f}% overlap)   "
-                         f"seam ratio {ratio:.3f}", fontsize=7)
+        ax_img.set_title(
+            f"stride {stride} ({overlap_pct:.1f}% overlap)   "
+            f"seam ratio {ratio:.3f}",
+            fontsize=7,
+        )
         ax_img.axis("off")
 
         for ax, prof, sm, bm, lbl in [
-            (ax_x, diag["prof_x"], diag["smx"], diag["bmx"],
-             r"$|\partial I/\partial x|$ (vert. seams)"),
-            (ax_y, diag["prof_y"], diag["smy"], diag["bmy"],
-             r"$|\partial I/\partial y|$ (horiz. seams)"),
+            (
+                ax_x,
+                diag["prof_x"],
+                diag["smx"],
+                diag["bmx"],
+                r"$|\partial I/\partial x|$ (vert. seams)",
+            ),
+            (
+                ax_y,
+                diag["prof_y"],
+                diag["smy"],
+                diag["bmy"],
+                r"$|\partial I/\partial y|$ (horiz. seams)",
+            ),
         ]:
             u = np.arange(prof.shape[0]) + 0.5
             ax.plot(u, prof, color="0.4", lw=0.3)
@@ -282,17 +330,24 @@ def plot_diagnostic(pano_rgb, seams_px, diag, ratio, stride, overlap_pct, out_pa
                 ax.spines[side].set_linewidth(0.6)
         ax_x.yaxis.set_major_locator(plt.MaxNLocator(4))
         plt.setp(ax_y.get_yticklabels(), visible=False)
-        lo, hi = ax_x.get_ylim()                  # shared headroom so the
+        lo, hi = ax_x.get_ylim()  # shared headroom so the
         ax_x.set_ylim(lo, hi + 0.24 * (hi - lo))  # legend sits clear of data
 
         fig.tight_layout(h_pad=0.5)
         # One legend for both profile panels, centred in their headroom band
         # (per-panel legends don't fit a ~1 in panel at print size).
         bb_l, bb_r = ax_x.get_position(), ax_y.get_position()
-        fig.legend(*ax_x.get_legend_handles_labels(), ncol=2, frameon=False,
-                   loc="upper center", fontsize=6,
-                   bbox_to_anchor=((bb_l.x0 + bb_r.x1) / 2, bb_l.y1),
-                   handletextpad=0.1, columnspacing=0.8, markerscale=2.2)
+        fig.legend(
+            *ax_x.get_legend_handles_labels(),
+            ncol=2,
+            frameon=False,
+            loc="upper center",
+            fontsize=6,
+            bbox_to_anchor=((bb_l.x0 + bb_r.x1) / 2, bb_l.y1),
+            handletextpad=0.1,
+            columnspacing=0.8,
+            markerscale=2.2,
+        )
         for ext in ("pdf", "png"):
             fig.savefig(out_path.with_suffix(f".{ext}"))
         plt.close(fig)
@@ -305,6 +360,7 @@ def ci95_halfwidth(vals):
     error bars then show uncertainty about the MEAN ratio, which is what the
     overlap sweep argues about, not the per-image spread."""
     from scipy.stats import t
+
     vals = np.asarray(vals, dtype=float)
     vals = vals[~np.isnan(vals)]
     if vals.size < 2:
@@ -318,8 +374,10 @@ def ci95_halfwidth(vals):
 # Hann window, and never zero at the window edges), so this is the accurate
 # name. Internal keys stay "hann"/"uniform" (dir names, JSON configs).
 WINDOW_LABELS = {"hann": "Sine window", "uniform": "Uniform window"}
-SERIES_STYLE = {"hann": dict(color="#0072B2", marker="o"),
-                "uniform": dict(color="#D55E00", marker="s")}
+SERIES_STYLE = {
+    "hann": dict(color="#0072B2", marker="o"),
+    "uniform": dict(color="#D55E00", marker="s"),
+}
 
 
 def plot_summary(series, out_path):
@@ -331,8 +389,14 @@ def plot_summary(series, out_path):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with plt.rc_context(ECCV_RC):
         fig, ax = plt.subplots(figsize=(0.5 * ECCV_TEXTWIDTH_IN, 1.9))
-        ax.axhline(1.0, color="0.45", ls=(0, (4, 3)), lw=0.8, zorder=1,
-                   label="seamless (ratio = 1)")
+        ax.axhline(
+            1.0,
+            color="0.45",
+            ls=(0, (4, 3)),
+            lw=0.8,
+            zorder=1,
+            label="seamless (ratio = 1)",
+        )
         all_x = set()
         for key, overlaps, means, cis in series:
             order = np.argsort(np.asarray(overlaps, dtype=float))
@@ -340,10 +404,23 @@ def plot_summary(series, out_path):
             y = np.asarray(means, dtype=float)[order]
             e = np.asarray(cis, dtype=float)[order]
             st = SERIES_STYLE[key]
-            ax.errorbar(x, y, yerr=e, color=st["color"], lw=1.2,
-                        marker=st["marker"], ms=3.2, mfc=st["color"],
-                        mec="white", mew=0.5, elinewidth=0.8, capsize=1.8,
-                        capthick=0.8, zorder=3, label=WINDOW_LABELS[key])
+            ax.errorbar(
+                x,
+                y,
+                yerr=e,
+                color=st["color"],
+                lw=1.2,
+                marker=st["marker"],
+                ms=3.2,
+                mfc=st["color"],
+                mec="white",
+                mew=0.5,
+                elinewidth=0.8,
+                capsize=1.8,
+                capthick=0.8,
+                zorder=3,
+                label=WINDOW_LABELS[key],
+            )
             all_x.update(x.tolist())
         xt = sorted(all_x)
         ax.set_xlabel("Window overlap (%)")
@@ -426,7 +503,7 @@ def summary_from_metrics(metrics):
         overlaps.append(rec["overlap_pct"])
         means.append(float(np.mean(vals)))
         cis.append(ci95_halfwidth(vals))
-    if not overlaps:                       # very old JSON without per-image data
+    if not overlaps:  # very old JSON without per-image data
         summ = metrics["summary"]
         n = metrics["config"]["n_images"]
         overlaps, means = summ["overlaps"], summ["means"]
@@ -443,10 +520,12 @@ def replot_both(json_hann, json_uniform):
         with open(path) as f:
             metrics = json.load(f)
         if metrics["config"].get("use_hann", True) != (key == "hann"):
-            print(f"[warn] {path}: config says use_hann="
-                  f"{metrics['config'].get('use_hann')} but it was passed as "
-                  f"the {WINDOW_LABELS[key]!r} series -- check the order of "
-                  f"--from_json / --from_json_uniform.")
+            print(
+                f"[warn] {path}: config says use_hann="
+                f"{metrics['config'].get('use_hann')} but it was passed as "
+                f"the {WINDOW_LABELS[key]!r} series -- check the order of "
+                f"--from_json / --from_json_uniform."
+            )
         series.append((key, *summary_from_metrics(metrics)))
     out = Path(json_hann).resolve().parent.parent / "stitching_seam_ratio_both.png"
     plot_summary(series, out)
@@ -464,8 +543,9 @@ def replot_from_json(json_path):
     out_dir = json_path.parent
 
     key = "hann" if metrics["config"].get("use_hann", True) else "uniform"
-    plot_summary([(key, *summary_from_metrics(metrics))],
-                 out_dir / "stitching_seam_ratio.png")
+    plot_summary(
+        [(key, *summary_from_metrics(metrics))], out_dir / "stitching_seam_ratio.png"
+    )
 
     for stride_str, rec in metrics["strides"].items():
         stride = int(stride_str)
@@ -475,46 +555,72 @@ def replot_from_json(json_path):
             rgb_path = out_dir / diag["rgb_png"]
             p = diag.get("image", 0)
             if not rgb_path.exists():
-                print(f"  skip diag stride {stride_str} img {p}: missing {rgb_path.name}")
+                print(
+                    f"  skip diag stride {stride_str} img {p}: missing {rgb_path.name}"
+                )
                 continue
-            rgb = plt.imread(rgb_path)[..., :3]                      # [H, W, 3], 0..1
-            rgb_t = torch.from_numpy(np.ascontiguousarray(rgb)).permute(2, 0, 1).unsqueeze(0).float()
-            diag_np = {k: _restore(v) for k, v in diag.items()
-                       if k not in ("ratio", "rgb_png", "image")}
-            plot_diagnostic(rgb_t, rec["seams_px"], diag_np, _restore(diag["ratio"]),
-                            stride, rec["overlap_pct"], out_dir / f"diag_stride{stride:02d}_img{p:02d}.png")
+            rgb = plt.imread(rgb_path)[..., :3]  # [H, W, 3], 0..1
+            rgb_t = (
+                torch.from_numpy(np.ascontiguousarray(rgb))
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .float()
+            )
+            diag_np = {
+                k: _restore(v)
+                for k, v in diag.items()
+                if k not in ("ratio", "rgb_png", "image")
+            }
+            plot_diagnostic(
+                rgb_t,
+                rec["seams_px"],
+                diag_np,
+                _restore(diag["ratio"]),
+                stride,
+                rec["overlap_pct"],
+                out_dir / f"diag_stride{stride:02d}_img{p:02d}.png",
+            )
 
     print(f"Re-rendered figures under {out_dir} (from {json_path.name})")
 
 
 def run_variant(window, model, rae, conds, seed_rgbs, args, device):
     """One full stride sweep with the given blend window ('hann' | 'uniform').
-Writes its metrics JSON, per-variant summary plot and diagnostics into its
-own out dir (stitching / stitching_no_hann) and returns (overlaps, means,
-ci95) for the combined figure. Conds/seeds come from the caller, so
-per-stride torch.manual_seed further makes the initial noise identical
-"""
+    Writes its metrics JSON, per-variant summary plot and diagnostics into its
+    own out dir (stitching / stitching_no_hann) and returns (overlaps, means,
+    ci95) for the combined figure. Conds/seeds come from the caller, so
+    per-stride torch.manual_seed further makes the initial noise identical
+    """
     use_hann = window == "hann"
     cond_tl_all, cond_tr_all, cond_bl_all, cond_br_all = conds
-    out_dir = FIG_ROOT / CFM_RUN_NAME / ("stitching" if use_hann else "stitching_no_hann")
+    out_dir = (
+        FIG_ROOT / CFM_RUN_NAME / ("stitching" if use_hann else "stitching_no_hann")
+    )
     save_seed_previews(seed_rgbs, out_dir)
-    results = {}   # stride -> list of per-image combined ratios
+    results = {}  # stride -> list of per-image combined ratios
 
     # Everything needed to rebuild the figures without regenerating images.
     metrics = {
         "config": {
-            "scale": args.scale, "strides": args.strides, "n_images": args.n_images,
-            "batch_size": args.batch_size, "decode_batch_size": args.decode_batch_size,
+            "scale": args.scale,
+            "strides": args.strides,
+            "n_images": args.n_images,
+            "batch_size": args.batch_size,
+            "decode_batch_size": args.decode_batch_size,
             "n_steps": args.n_steps,
-            "cfg_scale": args.cfg_scale, "temperature": args.temperature,
-            "seam_band": args.seam_band, "edge_margin": args.edge_margin,
-            "seed": args.seed, "grid": GRID, "patch": PATCH,
+            "cfg_scale": args.cfg_scale,
+            "temperature": args.temperature,
+            "seam_band": args.seam_band,
+            "edge_margin": args.edge_margin,
+            "seed": args.seed,
+            "grid": GRID,
+            "patch": PATCH,
             "n_diag_images": args.n_diag_images,
             "use_hann": use_hann,
             "cfm_run_name": CFM_RUN_NAME,
         },
-        "strides": {},   # str(stride) -> per-stride results
-        "summary": {},   # filled after the sweep
+        "strides": {},  # str(stride) -> per-stride results
+        "summary": {},  # filled after the sweep
     }
 
     for stride in args.strides:
@@ -527,8 +633,8 @@ per-stride torch.manual_seed further makes the initial noise identical
         stride_rec = {
             "overlap_pct": overlap_pct,
             "seams_px": seams_px,
-            "images": [],      # per-image {ratio, rx, ry}
-            "diags": [],       # per-diagnostic-image profiles/masks (first n_diag_images)
+            "images": [],  # per-image {ratio, rx, ry}
+            "diags": [],  # per-diagnostic-image profiles/masks (first n_diag_images)
         }
         metrics["strides"][str(stride)] = stride_rec
 
@@ -537,22 +643,35 @@ per-stride torch.manual_seed further makes the initial noise identical
         # metric are due to overlap, not the random draw.
         torch.manual_seed(args.seed)
         pano_rgb, _ = generate_grid(
-            model, rae, cond_tl_all, cond_tr_all, cond_bl_all, cond_br_all,
-            scale=args.scale, n_steps=args.n_steps,
-            stride=stride, cfg_scale=args.cfg_scale,
-            temperature=args.temperature, batch_size=args.batch_size,
+            model,
+            rae,
+            cond_tl_all,
+            cond_tr_all,
+            cond_bl_all,
+            cond_br_all,
+            scale=args.scale,
+            n_steps=args.n_steps,
+            stride=stride,
+            cfg_scale=args.cfg_scale,
+            temperature=args.temperature,
+            batch_size=args.batch_size,
             decode_batch_size=args.decode_batch_size,
-            use_hann=use_hann, device=device,
+            use_hann=use_hann,
+            device=device,
         )
 
         for p in tqdm(range(args.n_images), desc=f"Evaluating stride {stride}"):
             ratio, diag = seam_gradient_ratio(
-                pano_rgb[p], seams_px, band=args.seam_band, edge_margin=args.edge_margin)
+                pano_rgb[p], seams_px, band=args.seam_band, edge_margin=args.edge_margin
+            )
             results[stride].append(ratio)
             stride_rec["images"].append(
-                {"ratio": ratio, "rx": diag["rx"], "ry": diag["ry"]})
-            print(f"stride={stride:2d} overlap={overlap_pct:5.1f}%  image {p}: "
-                  f"seam_ratio={ratio:.4f} (x={diag['rx']:.4f}, y={diag['ry']:.4f})")
+                {"ratio": ratio, "rx": diag["rx"], "ry": diag["ry"]}
+            )
+            print(
+                f"stride={stride:2d} overlap={overlap_pct:5.1f}%  image {p}: "
+                f"seam_ratio={ratio:.4f} (x={diag['rx']:.4f}, y={diag['ry']:.4f})"
+            )
 
             if p < args.n_diag_images:
                 # Save the raw background panorama separately (one per image/overlap)
@@ -561,12 +680,20 @@ per-stride torch.manual_seed further makes the initial noise identical
                 rgb_png = out_dir / f"rgb_stride{stride:02d}_img{p:02d}.png"
                 plt.imsave(rgb_png, pano_rgb[p].permute(1, 2, 0).cpu().numpy())
                 stride_rec["diags"].append(
-                    {"image": p, "ratio": ratio, "rgb_png": rgb_png.name, **diag})
-                plot_diagnostic(pano_rgb[p:p + 1], seams_px, diag, ratio, stride, overlap_pct,
-                                out_dir / f"diag_stride{stride:02d}_img{p:02d}.png")
+                    {"image": p, "ratio": ratio, "rgb_png": rgb_png.name, **diag}
+                )
+                plot_diagnostic(
+                    pano_rgb[p : p + 1],
+                    seams_px,
+                    diag,
+                    ratio,
+                    stride,
+                    overlap_pct,
+                    out_dir / f"diag_stride{stride:02d}_img{p:02d}.png",
+                )
 
     # ---- summary ----
-    strides_sorted = sorted(results.keys(), reverse=True)   # low -> high overlap
+    strides_sorted = sorted(results.keys(), reverse=True)  # low -> high overlap
     overlaps, means, stds, cis = [], [], [], []
     print("\n=== Stitching seam gradient ratio (mean +/- 95% CI over images) ===")
     print(f"{'stride':>6} {'overlap%':>9} {'seam_ratio':>12}")
@@ -580,12 +707,17 @@ per-stride torch.manual_seed further makes the initial noise identical
         means.append(float(vals.mean()))
         stds.append(float(vals.std()))
         cis.append(ci95_halfwidth(vals))
-        print(f"{stride:>6} {overlap_pct:>9.1f} {vals.mean():>8.4f} +/- {cis[-1]:.4f} "
-              f"(std {vals.std():.4f}, n={vals.size})")
+        print(
+            f"{stride:>6} {overlap_pct:>9.1f} {vals.mean():>8.4f} +/- {cis[-1]:.4f} "
+            f"(std {vals.std():.4f}, n={vals.size})"
+        )
 
     metrics["summary"] = {
-        "strides": strides_sorted, "overlaps": overlaps,
-        "means": means, "stds": stds, "ci95": cis,
+        "strides": strides_sorted,
+        "overlaps": overlaps,
+        "means": means,
+        "stds": stds,
+        "ci95": cis,
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -594,8 +726,7 @@ per-stride torch.manual_seed further makes the initial noise identical
         json.dump(_to_jsonable(metrics), f, indent=2)
     print(f"Saved metrics to {metrics_path}")
 
-    plot_summary([(window, overlaps, means, cis)],
-                 out_dir / "stitching_seam_ratio.png")
+    plot_summary([(window, overlaps, means, cis)], out_dir / "stitching_seam_ratio.png")
     print(f"Done ({WINDOW_LABELS[window]})! Figures saved under {out_dir}")
     return overlaps, means, cis
 
@@ -628,22 +759,36 @@ def main(args):
     # between all four campaigns along both x and y.
     rng = np.random.default_rng(args.seed)
     tl_list, tr_list, bl_list, br_list = [], [], [], []
-    seed_rgbs = []   # (tl,tr,bl,br) display images for the first n_seed_previews images
+    seed_rgbs = []  # (tl,tr,bl,br) display images for the first n_seed_previews images
     for p in tqdm(range(args.n_images), desc="Sampling corner seeds"):
         print(f"Sampling corner seeds for image {p}:")
-        rgb_tl, cond_tl = sample_conditioning(TOP_LEFT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT)
-        rgb_tr, cond_tr = sample_conditioning(TOP_RIGHT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT)
-        rgb_bl, cond_bl = sample_conditioning(BOTTOM_LEFT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT)
-        rgb_br, cond_br = sample_conditioning(BOTTOM_RIGHT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT)
-        tl_list.append(cond_tl); tr_list.append(cond_tr)
-        bl_list.append(cond_bl); br_list.append(cond_br)
+        rgb_tl, cond_tl = sample_conditioning(
+            TOP_LEFT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT
+        )
+        rgb_tr, cond_tr = sample_conditioning(
+            TOP_RIGHT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT
+        )
+        rgb_bl, cond_bl = sample_conditioning(
+            BOTTOM_LEFT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT
+        )
+        rgb_br, cond_br = sample_conditioning(
+            BOTTOM_RIGHT_CAMPAIGN, rng, DEVICE, rgb_src=RGB_ROOT, feat_src=FEAT_ROOT
+        )
+        tl_list.append(cond_tl)
+        tr_list.append(cond_tr)
+        bl_list.append(cond_bl)
+        br_list.append(cond_br)
         if p < args.n_seed_previews:
             seed_rgbs.append((rgb_tl, rgb_tr, rgb_bl, rgb_br))
 
     # Stack into [n_images, 768] so all images are generated together in one
     # batched call per stride (see generate_grid's (image, window) task pool).
-    conds = (torch.cat(tl_list, dim=0), torch.cat(tr_list, dim=0),
-             torch.cat(bl_list, dim=0), torch.cat(br_list, dim=0))
+    conds = (
+        torch.cat(tl_list, dim=0),
+        torch.cat(tr_list, dim=0),
+        torch.cat(bl_list, dim=0),
+        torch.cat(br_list, dim=0),
+    )
 
     curves = {}
     for wv in variants:
@@ -657,56 +802,115 @@ def main(args):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Evaluate 2D tiled-generation stitching via seam gradients.")
-    ap.add_argument("--scale", type=int, default=3,
-                    help="Scaling factor: canvas is a scale x scale grid of tiles "
-                         f"(output ~ {GRID}*scale*{PATCH} px per side).")
-    ap.add_argument("--strides", type=int, nargs="+", default=[16, 12, 8, 4, 2],
-                    help=f"Window strides to sweep (<= window size {GRID}). "
-                         "overlap%% = (grid - stride)/grid.")
-    ap.add_argument("--n_images", type=int, default=3, help="Images averaged per stride.")
-    ap.add_argument("--n_seed_previews", type=int, default=3,
-                    help="Save corner-seed montages (seeds_image*.png) for the first N "
-                         "images so you can see which seeds were sampled (0 to disable).")
-    ap.add_argument("--n_diag_images", type=int, default=3,
-                    help="Per stride, save this many per-image diagnostic figures "
-                         "(diag_stride*_img*.png) + their background panoramas, for the "
-                         "first N images. Raise it to inspect stitching over more samples "
-                         "for the paper (0 to disable).")
-    ap.add_argument("--batch_size", type=int, default=64,
-                    help="Max windows batched together per model forward pass "
-                         "(cond+uncond fused into one call). Lower this if you hit OOM "
-                         "at small strides / large scale, where window counts can reach the hundreds.")
-    ap.add_argument("--decode_batch_size", type=int, default=None,
-                    help="Whole images decoded together in the final RAE decode "
-                         "(defaults to --batch_size). Keep this small at large --scale: "
-                         "decode memory grows as decode_batch_size * (grid*scale)**4 via the "
-                         "decoder's full-canvas attention, so decouple it from the (large) "
-                         "--batch_size used to keep generation fast.")
-    ap.add_argument("--n_steps", type=int, default=100, help="Flow-matching integration steps.")
-    ap.add_argument("--cfg_scale", type=float, default=3.0, help="Classifier-free guidance scale.")
-    ap.add_argument("--temperature", type=float, default=1.0, help="Initial-noise scale.")
-    ap.add_argument("--seam_band", type=int, default=PATCH,
-                    help="Half-width (px) of the band around each seam (fixed across strides).")
-    ap.add_argument("--edge_margin", type=int, default=PATCH,
-                    help="Pixels excluded at each border from the baseline.")
-    ap.add_argument("--seed", type=int, default=0, help="RNG seed for seed sampling and noise.")
-    ap.add_argument("--window", choices=["hann", "uniform", "both"], default=None,
-                    help="Blend window over overlapping tiles: 'hann' (tapered, "
-                         "default), 'uniform' (box averaging, vanilla "
-                         "MultiDiffusion), or 'both' to run the two sweeps back "
-                         "to back on identical seeds/noise -- each into its own "
-                         "dir (stitching / stitching_no_hann) -- plus a combined "
-                         "two-line summary figure.")
-    ap.add_argument("--no_hann", action="store_true",
-                    help="Legacy alias for --window uniform (ignored when "
-                         "--window is given).")
-    ap.add_argument("--from_json", type=str, default=None,
-                    help="Skip generation entirely; reload a saved stitching_metrics.json "
-                         "and re-render the figures (summary + diagnostics from the saved "
-                         "rgb_stride*.png backgrounds) to refine plot styling.")
-    ap.add_argument("--from_json_uniform", type=str, default=None,
-                    help="With --from_json (the Hann JSON): also load this "
-                         "uniform-window JSON and render only the combined "
-                         "two-line summary figure.")
+    ap = argparse.ArgumentParser(
+        description="Evaluate 2D tiled-generation stitching via seam gradients."
+    )
+    ap.add_argument(
+        "--scale",
+        type=int,
+        default=3,
+        help="Scaling factor: canvas is a scale x scale grid of tiles "
+        f"(output ~ {GRID}*scale*{PATCH} px per side).",
+    )
+    ap.add_argument(
+        "--strides",
+        type=int,
+        nargs="+",
+        default=[16, 12, 8, 4, 2],
+        help=f"Window strides to sweep (<= window size {GRID}). "
+        "overlap%% = (grid - stride)/grid.",
+    )
+    ap.add_argument(
+        "--n_images", type=int, default=3, help="Images averaged per stride."
+    )
+    ap.add_argument(
+        "--n_seed_previews",
+        type=int,
+        default=3,
+        help="Save corner-seed montages (seeds_image*.png) for the first N "
+        "images so you can see which seeds were sampled (0 to disable).",
+    )
+    ap.add_argument(
+        "--n_diag_images",
+        type=int,
+        default=3,
+        help="Per stride, save this many per-image diagnostic figures "
+        "(diag_stride*_img*.png) + their background panoramas, for the "
+        "first N images. Raise it to inspect stitching over more samples "
+        "for the paper (0 to disable).",
+    )
+    ap.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Max windows batched together per model forward pass "
+        "(cond+uncond fused into one call). Lower this if you hit OOM "
+        "at small strides / large scale, where window counts can reach the hundreds.",
+    )
+    ap.add_argument(
+        "--decode_batch_size",
+        type=int,
+        default=None,
+        help="Whole images decoded together in the final RAE decode "
+        "(defaults to --batch_size). Keep this small at large --scale: "
+        "decode memory grows as decode_batch_size * (grid*scale)**4 via the "
+        "decoder's full-canvas attention, so decouple it from the (large) "
+        "--batch_size used to keep generation fast.",
+    )
+    ap.add_argument(
+        "--n_steps", type=int, default=100, help="Flow-matching integration steps."
+    )
+    ap.add_argument(
+        "--cfg_scale", type=float, default=3.0, help="Classifier-free guidance scale."
+    )
+    ap.add_argument(
+        "--temperature", type=float, default=1.0, help="Initial-noise scale."
+    )
+    ap.add_argument(
+        "--seam_band",
+        type=int,
+        default=PATCH,
+        help="Half-width (px) of the band around each seam (fixed across strides).",
+    )
+    ap.add_argument(
+        "--edge_margin",
+        type=int,
+        default=PATCH,
+        help="Pixels excluded at each border from the baseline.",
+    )
+    ap.add_argument(
+        "--seed", type=int, default=0, help="RNG seed for seed sampling and noise."
+    )
+    ap.add_argument(
+        "--window",
+        choices=["hann", "uniform", "both"],
+        default=None,
+        help="Blend window over overlapping tiles: 'hann' (tapered, "
+        "default), 'uniform' (box averaging, vanilla "
+        "MultiDiffusion), or 'both' to run the two sweeps back "
+        "to back on identical seeds/noise -- each into its own "
+        "dir (stitching / stitching_no_hann) -- plus a combined "
+        "two-line summary figure.",
+    )
+    ap.add_argument(
+        "--no_hann",
+        action="store_true",
+        help="Legacy alias for --window uniform (ignored when " "--window is given).",
+    )
+    ap.add_argument(
+        "--from_json",
+        type=str,
+        default=None,
+        help="Skip generation entirely; reload a saved stitching_metrics.json "
+        "and re-render the figures (summary + diagnostics from the saved "
+        "rgb_stride*.png backgrounds) to refine plot styling.",
+    )
+    ap.add_argument(
+        "--from_json_uniform",
+        type=str,
+        default=None,
+        help="With --from_json (the Hann JSON): also load this "
+        "uniform-window JSON and render only the combined "
+        "two-line summary figure.",
+    )
     main(ap.parse_args())

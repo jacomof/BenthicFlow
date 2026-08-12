@@ -1,5 +1,4 @@
-"""Fit global PCA bases on all cached DINOv2 patch features.
-"""
+"""Fit global PCA bases on all cached DINOv2 patch features."""
 
 import argparse
 import sys
@@ -30,11 +29,13 @@ def collect_patch_pool(max_samples: int | None) -> np.ndarray:
         blocks = []
         for camp, depl, fp in files:
             z = np.load(fp)
-            f = z["features"].astype(np.float32)        # [N, 16, 16, D]
+            f = z["features"].astype(np.float32)  # [N, 16, 16, D]
             blocks.append(f.reshape(-1, f.shape[-1]))
         F = np.concatenate(blocks, axis=0)
-        print(f"Loaded {F.shape[0]:,} patch vectors of dim {F.shape[1]} "
-              f"from {len(files)} deployments.")
+        print(
+            f"Loaded {F.shape[0]:,} patch vectors of dim {F.shape[1]} "
+            f"from {len(files)} deployments."
+        )
         return F
 
     # Subsample evenly across deployments
@@ -49,16 +50,22 @@ def collect_patch_pool(max_samples: int | None) -> np.ndarray:
             f = f[idx]
         blocks.append(f)
     F = np.concatenate(blocks, axis=0)
-    print(f"Sampled {F.shape[0]:,} patch vectors of dim {F.shape[1]} "
-          f"from {len(files)} deployments (max_samples={max_samples}).")
+    print(
+        f"Sampled {F.shape[0]:,} patch vectors of dim {F.shape[1]} "
+        f"from {len(files)} deployments (max_samples={max_samples})."
+    )
     return F
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--max-samples", type=int, default=5_000_000,
-                    help="Subsample patches to keep PCA fit tractable. "
-                         "5M patches is plenty (default).")
+    ap.add_argument(
+        "--max-samples",
+        type=int,
+        default=5_000_000,
+        help="Subsample patches to keep PCA fit tractable. "
+        "5M patches is plenty (default).",
+    )
     args = ap.parse_args()
 
     PCA_ROOT.mkdir(exist_ok=True)
@@ -74,8 +81,10 @@ def main() -> None:
     # 3-D basis — for visualization
     pca3 = PCA(n_components=3, random_state=0).fit(F)
     joblib.dump(pca3, PCA_ROOT / "pca3.joblib")
-    print(f"PCA-3   cumulative explained variance: "
-          f"{pca3.explained_variance_ratio_.sum():.3f}")
+    print(
+        f"PCA-3   cumulative explained variance: "
+        f"{pca3.explained_variance_ratio_.sum():.3f}"
+    )
 
     # Global normalization range — fit on a fresh subsample to capture tail behavior
     Z3 = pca3.transform(F)

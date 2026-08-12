@@ -1,34 +1,35 @@
-"""GPU exposure normalization via Kornia CLAHE on LAB luminance.
-"""
+"""GPU exposure normalization via Kornia CLAHE on LAB luminance."""
 
 import argparse
 import sys
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pickle
 
 import cv2
 import numpy as np
 import torch
 import torchvision
-from kornia.enhance import equalize_clahe, equalize
-from kornia.color import rgb_to_lab, lab_to_rgb
+from kornia.color import lab_to_rgb, rgb_to_lab
+from kornia.enhance import equalize, equalize_clahe
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from benthicflow import DATA_NORM_ROOT
 from benthicflow.reef_io import iter_deployments, load_manifest, normalized_image_path
-import pickle
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CLAHE_CLIP_LIMIT = 3.0
-CLAHE_TILE_GRID  = (8, 8)
-JPEG_QUALITY     = 92
+CLAHE_TILE_GRID = (8, 8)
+JPEG_QUALITY = 92
 
 
 # ----------------------------- dataset -------------------------------------
+
 
 class JpegBytesDataset(Dataset):
     """Yields raw JPEG bytes + destination paths.
@@ -38,7 +39,7 @@ class JpegBytesDataset(Dataset):
     """
 
     def __init__(self, jobs):
-        self.jobs = jobs   # list of (src_path, dst_path)
+        self.jobs = jobs  # list of (src_path, dst_path)
 
     def __len__(self):
         return len(self.jobs)
@@ -60,6 +61,7 @@ def collate(batch):
 
 
 # ----------------------------- GPU pipeline -------------------------------
+
 
 @torch.inference_mode()
 def normalize_batch_gpu(jpeg_bytes_list, global_equalize=False):
@@ -87,11 +89,14 @@ def normalize_batch_gpu(jpeg_bytes_list, global_equalize=False):
         if global_equalize:
             L_eq = equalize(L) * 100.0
         else:
-            L_eq = equalize_clahe(
-                L,
-                clip_limit=CLAHE_CLIP_LIMIT,
-                grid_size=CLAHE_TILE_GRID,
-            ) * 100.0
+            L_eq = (
+                equalize_clahe(
+                    L,
+                    clip_limit=CLAHE_CLIP_LIMIT,
+                    grid_size=CLAHE_TILE_GRID,
+                )
+                * 100.0
+            )
 
         lab[:, 0:1] = L_eq
         rgb = lab_to_rgb(lab).clamp_(0, 1)
@@ -112,6 +117,7 @@ def normalize_batch_gpu(jpeg_bytes_list, global_equalize=False):
 
 # ----------------------------- writer ------------------------------------
 
+
 def encode_and_write(img_chw_u8_cpu, dst_path):
     """JPEG-encode on CPU and write."""
     arr = img_chw_u8_cpu.permute(1, 2, 0).numpy()  # HWC RGB uint8
@@ -123,6 +129,7 @@ def encode_and_write(img_chw_u8_cpu, dst_path):
 
 # ----------------------------- driver ------------------------------------
 
+
 def collect_jobs(campaigns):
     if Path("normalize_jobs.pkl").exists():
         with open("normalize_jobs.pkl", "rb") as f:
@@ -130,7 +137,9 @@ def collect_jobs(campaigns):
         print(f"Loaded {len(jobs)} jobs from normalize_jobs.pkl")
         return jobs
     jobs = []
-    for campaign, deployment, manifest, image_dir in list(iter_deployments(campaigns))[:1]:
+    for campaign, deployment, manifest, image_dir in list(iter_deployments(campaigns))[
+        :1
+    ]:
         print(f"Collecting {campaign}/{deployment}...")
         df = load_manifest(manifest, image_dir)
         for _, row in df.iterrows():
@@ -139,7 +148,7 @@ def collect_jobs(campaigns):
             if dst.exists() and dst.stat().st_size > 0:
                 continue
             jobs.append((src, dst))
-    
+
     with open("normalize_jobs.pkl", "wb") as f:
         pickle.dump(jobs, f)
     return jobs
@@ -148,16 +157,30 @@ def collect_jobs(campaigns):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--campaigns", nargs="+", default=None)
-    ap.add_argument("--batch", type=int, default=8,
-                    help="Images per GPU batch.")
-    ap.add_argument("--read-workers", type=int, default=8,
-                    help="DataLoader workers for reading JPEG bytes.")
-    ap.add_argument("--write-workers", type=int, default=8,
-                    help="Thread pool size for JPEG encoding/writing.")
-    ap.add_argument("--max-pending-writes", type=int, default=None,
-                    help="Maximum queued CPU write jobs. Defaults to 4x write-workers.")
-    ap.add_argument("--global-equalize", action="store_true",
-                    help="Apply global histogram equalization instead of CLAHE.")
+    ap.add_argument("--batch", type=int, default=8, help="Images per GPU batch.")
+    ap.add_argument(
+        "--read-workers",
+        type=int,
+        default=8,
+        help="DataLoader workers for reading JPEG bytes.",
+    )
+    ap.add_argument(
+        "--write-workers",
+        type=int,
+        default=8,
+        help="Thread pool size for JPEG encoding/writing.",
+    )
+    ap.add_argument(
+        "--max-pending-writes",
+        type=int,
+        default=None,
+        help="Maximum queued CPU write jobs. Defaults to 4x write-workers.",
+    )
+    ap.add_argument(
+        "--global-equalize",
+        action="store_true",
+        help="Apply global histogram equalization instead of CLAHE.",
+    )
     args = ap.parse_args()
 
     DATA_NORM_ROOT.mkdir(exist_ok=True)
@@ -171,10 +194,12 @@ def main():
         else args.write_workers * 4
     )
 
-    print(f"Normalizing {len(jobs):,} images on {DEVICE} "
-          f"(batch={args.batch}, read_workers={args.read_workers}, "
-          f"write_workers={args.write_workers}, "
-          f"max_pending_writes={max_pending_writes})")
+    print(
+        f"Normalizing {len(jobs):,} images on {DEVICE} "
+        f"(batch={args.batch}, read_workers={args.read_workers}, "
+        f"write_workers={args.write_workers}, "
+        f"max_pending_writes={max_pending_writes})"
+    )
 
     ds = JpegBytesDataset(jobs)
     dl = DataLoader(
@@ -191,8 +216,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.write_workers) as write_pool:
         for bytes_list, dst_paths, valid_flags in tqdm(dl, total=len(dl)):
             good_idx = [
-                i for i, v in enumerate(valid_flags)
-                if v and len(bytes_list[i]) > 0
+                i for i, v in enumerate(valid_flags) if v and len(bytes_list[i]) > 0
             ]
 
             if not good_idx:
@@ -204,7 +228,9 @@ def main():
 
             try:
                 with torch.inference_mode():
-                    out_imgs = normalize_batch_gpu(good_bytes, global_equalize=args.global_equalize)
+                    out_imgs = normalize_batch_gpu(
+                        good_bytes, global_equalize=args.global_equalize
+                    )
 
                 # Critical fix:
                 # move each output to CPU before submitting to the writer.
@@ -240,6 +266,7 @@ def main():
             f.result()
 
     print(f"\nDone. ok={n_ok}  fail={n_fail}")
+
 
 if __name__ == "__main__":
     main()

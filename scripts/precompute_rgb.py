@@ -1,5 +1,4 @@
-"""Precompute per-deployment RGB arrays for fast node-local mmap loading.
-"""
+"""Precompute per-deployment RGB arrays for fast node-local mmap loading."""
 
 from __future__ import annotations
 
@@ -12,27 +11,28 @@ from PIL import Image
 from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
-from benthicflow import SCRATCH_ROOT, DEPTH_ROOT, DATA_NORM_ROOT
+from benthicflow import DATA_NORM_ROOT, DEPTH_ROOT, SCRATCH_ROOT
 
 # Source keys live next to the depth arrays. DEPTH_ROOT may point at node-local;
 # the keys are also on the shared source, so resolve from SCRATCH_ROOT here.
 DEPTH_SRC = SCRATCH_ROOT / "depth"
 RGB_DST = SCRATCH_ROOT / "rgb"
 
-NATIVE_SIZE = 518   # must match the training NATIVE_SIZE
+NATIVE_SIZE = 518  # must match the training NATIVE_SIZE
 
 
 def _load_resize(args: tuple[str, int]) -> np.ndarray:
     """Open one JPEG and apply the deterministic Resize+CenterCrop -> uint8 HWC."""
     path, size = args
     img = Image.open(path).convert("RGB")
-    img = TF.resize(img, size, antialias=True)     # smaller edge -> size
+    img = TF.resize(img, size, antialias=True)  # smaller edge -> size
     img = TF.center_crop(img, [size, size])
-    return np.asarray(img, dtype=np.uint8)         # [S, S, 3]
+    return np.asarray(img, dtype=np.uint8)  # [S, S, 3]
 
 
-def build_deployment(campaign: str, deployment: str, size: int, workers: int,
-                     overwrite: bool = False) -> None:
+def build_deployment(
+    campaign: str, deployment: str, size: int, workers: int, overwrite: bool = False
+) -> None:
     keys_path = DEPTH_SRC / campaign / f"{deployment}_keys.npy"
     if not keys_path.exists():
         print(f"  [skip] no keys file: {keys_path}")
@@ -54,15 +54,22 @@ def build_deployment(campaign: str, deployment: str, size: int, workers: int,
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(".npy.tmp")
-    arr = np.lib.format.open_memmap(tmp_path, mode="w+", dtype=np.uint8,
-                                    shape=(n, size, size, 3))
+    arr = np.lib.format.open_memmap(
+        tmp_path, mode="w+", dtype=np.uint8, shape=(n, size, size, 3)
+    )
     with Pool(workers) as pool:
-        for i, im in enumerate(tqdm(pool.imap(_load_resize, paths, chunksize=16),
-                                    total=n, desc=f"{campaign}/{deployment}", leave=False)):
+        for i, im in enumerate(
+            tqdm(
+                pool.imap(_load_resize, paths, chunksize=16),
+                total=n,
+                desc=f"{campaign}/{deployment}",
+                leave=False,
+            )
+        ):
             arr[i] = im
     arr.flush()
     del arr
-    tmp_path.rename(out_path)   # atomic: only a complete file ends up at out_path
+    tmp_path.rename(out_path)  # atomic: only a complete file ends up at out_path
     print(f"  [built] {campaign}/{deployment} ({n})")
 
 
@@ -70,8 +77,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--native-size", type=int, default=NATIVE_SIZE)
-    ap.add_argument("--campaigns", nargs="*", default=None,
-                    help="Optional subset of campaign names.")
+    ap.add_argument(
+        "--campaigns",
+        nargs="*",
+        default=None,
+        help="Optional subset of campaign names.",
+    )
     ap.add_argument("--overwrite", action="store_true")
     args = ap.parse_args()
 
@@ -86,8 +97,13 @@ def main() -> None:
     print(f"Building RGB arrays for {len(deployments)} deployments -> {RGB_DST}")
     print(f"  native size {args.native_size}, {args.workers} workers")
     for campaign, deployment in deployments:
-        build_deployment(campaign, deployment, args.native_size, args.workers,
-                         overwrite=args.overwrite)
+        build_deployment(
+            campaign,
+            deployment,
+            args.native_size,
+            args.workers,
+            overwrite=args.overwrite,
+        )
     print("Done.")
 
 

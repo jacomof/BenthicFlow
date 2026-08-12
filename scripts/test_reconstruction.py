@@ -1,24 +1,30 @@
 # scripts/test_reconstruction.py
-"""Evaluate RAE reconstruction fidelity with FID and KID.
-"""
+"""Evaluate RAE reconstruction fidelity with FID and KID."""
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import argparse
 import time
-import torch
+
 import matplotlib.pyplot as plt
+import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from benthicflow import FIG_ROOT
-from scripts.train_cfm_cfg import load_rae_frozen
 from scripts.test_generation import (
-    CSVSplitDataset, DEVICE, build_metrics, format_metrics,
-    print_campaign_summary, update_results_json, select_campaigns,
+    DEVICE,
+    CSVSplitDataset,
+    build_metrics,
+    format_metrics,
+    print_campaign_summary,
+    select_campaigns,
+    update_results_json,
 )
+from scripts.train_cfm_cfg import load_rae_frozen
 
 RESULTS_JSON = FIG_ROOT / "rae" / "test_reconstruction" / "eval_results.json"
 
@@ -30,8 +36,9 @@ def reconstruct(rae, dino, depth):
     depth: [B, 1, 14*gh, 14*gw] in [0, 1].
     Matches the RAE forward used at train time (train_cfm_cfg.py).
     """
-    rgbd, _ = rae(dino.to(DEVICE, non_blocking=True),
-                  depth.to(DEVICE, non_blocking=True))
+    rgbd, _ = rae(
+        dino.to(DEVICE, non_blocking=True), depth.to(DEVICE, non_blocking=True)
+    )
     return rgbd[:, :3].clamp(0, 1)
 
 
@@ -46,7 +53,8 @@ def save_reconstruction_debug(tag, orig_rgb, recon_rgb, n_samples):
         axes[0, j].imshow(orig_rgb[j].permute(1, 2, 0).cpu().numpy())
         axes[1, j].imshow(recon_rgb[j].permute(1, 2, 0).cpu().numpy())
         for r in (0, 1):
-            axes[r, j].set_xticks([]); axes[r, j].set_yticks([])
+            axes[r, j].set_xticks([])
+            axes[r, j].set_yticks([])
     axes[0, 0].set_ylabel("Original", fontsize=10)
     axes[1, 0].set_ylabel("RAE recon", fontsize=10)
     fig.suptitle(f"RAE reconstruction — {tag}", fontsize=12)
@@ -57,7 +65,9 @@ def save_reconstruction_debug(tag, orig_rgb, recon_rgb, n_samples):
     print(f"[{tag}] saved debug samples to {out_path}")
 
 
-def evaluate_reconstruction(rae, metrics, args, campaign=None, tag="global", debug_samples=0):
+def evaluate_reconstruction(
+    rae, metrics, args, campaign=None, tag="global", debug_samples=0
+):
     """FID/KID between RAE reconstructions and originals over one (sub)set.
 
     Returns a JSON-friendly score dict, or None if the set is too small.
@@ -68,8 +78,13 @@ def evaluate_reconstruction(rae, metrics, args, campaign=None, tag="global", deb
         return None
     # shuffle=False: FID/KID are order-independent and the whole (sub)set is
     # scanned, so sequential reads keep the big RGB mmaps cheap.
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
-                        num_workers=args.n_workers, pin_memory=True)
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.n_workers,
+        pin_memory=True,
+    )
 
     metrics.reset()
     n = 0
@@ -100,8 +115,10 @@ def evaluate_reconstruction(rae, metrics, args, campaign=None, tag="global", deb
 
     # One reconstruction per real image, so n_real == n_fake == n.
     score = metrics.compute(n, n)
-    print(f"Reconstruction [{tag}]: {format_metrics(score)}  (n={n})  "
-          f"-- dataloader wait {data_wait:.1f}s, gpu {gpu_time:.1f}s")
+    print(
+        f"Reconstruction [{tag}]: {format_metrics(score)}  (n={n})  "
+        f"-- dataloader wait {data_wait:.1f}s, gpu {gpu_time:.1f}s"
+    )
     return score
 
 
@@ -114,18 +131,32 @@ def main(args):
 
     sections = {}
     if args.mode in ("global", "both"):
-        score = evaluate_reconstruction(rae, metrics, args, campaign=None,
-                                        tag="global", debug_samples=args.debug_samples)
+        score = evaluate_reconstruction(
+            rae,
+            metrics,
+            args,
+            campaign=None,
+            tag="global",
+            debug_samples=args.debug_samples,
+        )
         if score is not None:
             sections["global"] = score
 
     if args.mode in ("per_campaign", "both"):
         campaigns = select_campaigns(args)
-        print(f"\nPer-campaign reconstruction over {len(campaigns)} campaigns: {campaigns}")
+        print(
+            f"\nPer-campaign reconstruction over {len(campaigns)} campaigns: {campaigns}"
+        )
         per_campaign = {}
         for campaign in campaigns:
-            score = evaluate_reconstruction(rae, metrics, args, campaign=campaign,
-                                            tag=campaign, debug_samples=args.debug_samples)
+            score = evaluate_reconstruction(
+                rae,
+                metrics,
+                args,
+                campaign=campaign,
+                tag=campaign,
+                debug_samples=args.debug_samples,
+            )
             if score is not None:
                 per_campaign[campaign] = score
         print_campaign_summary("Per-campaign RAE reconstruction FID/KID", per_campaign)
@@ -145,28 +176,58 @@ def main(args):
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(
         description="Evaluate RAE encode->decode reconstruction fidelity (FID/KID) "
-                    "vs the original test images, globally and per campaign.")
+        "vs the original test images, globally and per campaign."
+    )
 
-    argparser.add_argument("--rae_ckpt", type=str, required=True, help="Path to the RAE checkpoint.")
+    argparser.add_argument(
+        "--rae_ckpt", type=str, required=True, help="Path to the RAE checkpoint."
+    )
     argparser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
-    argparser.add_argument("--n_workers", type=int, default=4, help="Number of DataLoader workers.")
-    argparser.add_argument("--mode", type=str, default="both",
-                           choices=["global", "per_campaign", "both"],
-                           help="global: FID/KID over the whole test split; per_campaign: "
-                                "one FID/KID per campaign; both.")
-    argparser.add_argument("--feature_extractor", type=str, default="dino", choices=["dino", "inception"],
-                           help="Feature extractor for FID/KID: DINOv2 CLS token (dino) or InceptionV3.")
-    argparser.add_argument("--skip_kid", action="store_true",
-                           help="Only compute FID (skip the complementary KID metric).")
-    argparser.add_argument("--kid_subset_size", type=int, default=1000,
-                           help="KID MMD subset size per resample; clamped down to the available "
-                                "sample count per comparison.")
-    argparser.add_argument("--campaigns", type=str, nargs="+", default=None,
-                           help="Space-separated campaigns to evaluate (per_campaign mode). "
-                                "Default: all campaigns in the test split.")
-    argparser.add_argument("--debug_samples", type=int, default=4,
-                           help="Per tag, save this many [original | reconstruction] pairs to "
-                                "figs/rae/test_reconstruction/<tag>/. 0 disables.")
+    argparser.add_argument(
+        "--n_workers", type=int, default=4, help="Number of DataLoader workers."
+    )
+    argparser.add_argument(
+        "--mode",
+        type=str,
+        default="both",
+        choices=["global", "per_campaign", "both"],
+        help="global: FID/KID over the whole test split; per_campaign: "
+        "one FID/KID per campaign; both.",
+    )
+    argparser.add_argument(
+        "--feature_extractor",
+        type=str,
+        default="dino",
+        choices=["dino", "inception"],
+        help="Feature extractor for FID/KID: DINOv2 CLS token (dino) or InceptionV3.",
+    )
+    argparser.add_argument(
+        "--skip_kid",
+        action="store_true",
+        help="Only compute FID (skip the complementary KID metric).",
+    )
+    argparser.add_argument(
+        "--kid_subset_size",
+        type=int,
+        default=1000,
+        help="KID MMD subset size per resample; clamped down to the available "
+        "sample count per comparison.",
+    )
+    argparser.add_argument(
+        "--campaigns",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Space-separated campaigns to evaluate (per_campaign mode). "
+        "Default: all campaigns in the test split.",
+    )
+    argparser.add_argument(
+        "--debug_samples",
+        type=int,
+        default=4,
+        help="Per tag, save this many [original | reconstruction] pairs to "
+        "figs/rae/test_reconstruction/<tag>/. 0 disables.",
+    )
 
     args = argparser.parse_args()
     main(args)

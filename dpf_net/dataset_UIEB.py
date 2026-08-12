@@ -1,19 +1,26 @@
 import os
 import sys
+
 sys.path.append("../reef")
 
-import torch
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
-
-import numpy as np
-from PIL import Image
 import glob
-import random
-import cv2
-from pathlib import Path
 import pickle
-from benthicflow.reef_io import iter_deployments, load_manifest, normalized_image_path, depth_path
+import random
+from pathlib import Path
+
+import cv2
+import numpy as np
+import torch
+import torchvision.transforms as transforms
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+
+from benthicflow.reef_io import (
+    depth_path,
+    iter_deployments,
+    load_manifest,
+    normalized_image_path,
+)
 
 
 def collect_jobs(campaigns):
@@ -39,7 +46,7 @@ def collect_jobs(campaigns):
     return jobs
 
 
-#==========================augmentation==========================
+# ==========================augmentation==========================
 def transform_matrix_offset_center(matrix, x, y):
     o_x = float(x) / 2 + 0.5
     o_y = float(y) / 2 + 0.5
@@ -48,16 +55,24 @@ def transform_matrix_offset_center(matrix, x, y):
     transform_matrix = np.dot(np.dot(offset_matrix, matrix), reset_matrix)
     return transform_matrix
 
+
 def img_rotate(img, angle, center=None, scale=1.0):
-    (h, w) = img.shape[:2]
+    h, w = img.shape[:2]
 
     if center is None:
         center = (w // 2, h // 2)
 
     matrix = cv2.getRotationMatrix2D(center, angle, scale)
-    rotated_img = cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT,
-                                 borderValue=(0, 0, 0), )
+    rotated_img = cv2.warpAffine(
+        img,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT,
+        borderValue=(0, 0, 0),
+    )
     return rotated_img
+
 
 def augmentation(imgs):
     hflip = random.random() < 0.5
@@ -74,7 +89,10 @@ def augmentation(imgs):
         for i in range(len(imgs)):
             imgs[i] = img_rotate(imgs[i], angle)
     return imgs
-#==========================augmentation==========================
+
+
+# ==========================augmentation==========================
+
 
 def pre_B_estimate(raw, device):
     bgl = np.zeros_like(raw)
@@ -102,28 +120,36 @@ def pre_B_estimate(raw, device):
     bgl = torch.from_numpy(bgl / 255.0)
     return bgl.to(device, dtype=torch.float32).permute(2, 0, 1)
 
+
 def preprocess(imgs, device, isTrain):
-    '''
+    """
     imgs[0]:raw image
     imgs[1]:depth map
     imgs[2]:ref image(if exist)
-    '''
+    """
     BL = pre_B_estimate(imgs[0], device)
     imgs[0] = cv2.cvtColor(imgs[0], cv2.COLOR_BGR2RGB)
     if isTrain:
         imgs[2] = cv2.cvtColor(imgs[2], cv2.COLOR_BGR2RGB)
         imgs = augmentation(imgs)
-        data_raw = torch.from_numpy(imgs[0]/255.0)
-        data_ref = torch.from_numpy(imgs[2]/255.0)
+        data_raw = torch.from_numpy(imgs[0] / 255.0)
+        data_ref = torch.from_numpy(imgs[2] / 255.0)
         data_depth = torch.from_numpy(imgs[1])
-        return (data_raw.to(device, dtype=torch.float32).permute(2, 0, 1),
-                data_ref.to(device, dtype=torch.float32).permute(2, 0, 1),
-                data_depth.to(device, dtype=torch.float32).unsqueeze(0), BL)
+        return (
+            data_raw.to(device, dtype=torch.float32).permute(2, 0, 1),
+            data_ref.to(device, dtype=torch.float32).permute(2, 0, 1),
+            data_depth.to(device, dtype=torch.float32).unsqueeze(0),
+            BL,
+        )
     else:
         data_raw = torch.from_numpy(imgs[0] / 255.0)
         data_depth = torch.from_numpy(imgs[1])
-        return (data_raw.to(device, dtype=torch.float32).permute(2, 0, 1),
-                data_depth.to(device, dtype=torch.float32).unsqueeze(0), BL)
+        return (
+            data_raw.to(device, dtype=torch.float32).permute(2, 0, 1),
+            data_depth.to(device, dtype=torch.float32).unsqueeze(0),
+            BL,
+        )
+
 
 def populate_raw_list(campaigns):
     jobs = collect_jobs(campaigns)
@@ -133,10 +159,23 @@ def populate_raw_list(campaigns):
 
     return image_ori_list_raw, image_dst_list_raw, depth_list
 
+
 class UIEB_Dataset(Dataset):
-    def __init__(self, img_list, campaign, deployment, depthanything, device, Image_size=256, isTrain=True):
+    def __init__(
+        self,
+        img_list,
+        campaign,
+        deployment,
+        depthanything,
+        device,
+        Image_size=256,
+        isTrain=True,
+    ):
         self.raw_list = img_list
-        self.dst_list = [str(normalized_image_path(campaign, deployment, Path(p).stem)) for p in self.raw_list]
+        self.dst_list = [
+            str(normalized_image_path(campaign, deployment, Path(p).stem))
+            for p in self.raw_list
+        ]
         self.keys_list = [Path(p).stem for p in self.raw_list]
         raw_path = self.raw_list
         if isTrain:
@@ -153,16 +192,18 @@ class UIEB_Dataset(Dataset):
         print(f"Loading image: {data_raw_path}")
         dst_path = self.dst_list[index]
         key = self.keys_list[index]
-        file_name = data_raw_path.split('/')[-1].split('.')[0]
+        file_name = data_raw_path.split("/")[-1].split(".")[0]
         data_raw = cv2.imread(data_raw_path)
         print(f"Original image shape: {data_raw.shape}")
         if data_raw is None:
             print(f"Error loading image: {data_raw_path}")
             raise ValueError(f"Error loading image: {data_raw_path}")
-        data_raw = cv2.resize(data_raw, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+        data_raw = cv2.resize(
+            data_raw, (self.size, self.size), interpolation=cv2.INTER_LINEAR
+        )
 
         disp = self.depthanything.infer_image(data_raw)
-        far_mask = (disp == 0)
+        far_mask = disp == 0
         min_disp = np.min(disp[~far_mask])
         disp[far_mask] = min_disp
         data_depth = (disp.max() - disp) / ((disp.max() - disp.min()))
@@ -170,17 +211,24 @@ class UIEB_Dataset(Dataset):
         if self.isTrain:
             data_ref_path = self.ref_list[index]
             data_ref = cv2.imread(data_ref_path)
-            data_ref = cv2.resize(data_ref, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
-            data_raw, data_ref, data_depth, bl = preprocess([data_raw, data_depth, data_ref], self.device, self.isTrain)
-            return data_raw, data_ref, data_depth, bl, 
+            data_ref = cv2.resize(
+                data_ref, (self.size, self.size), interpolation=cv2.INTER_LINEAR
+            )
+            data_raw, data_ref, data_depth, bl = preprocess(
+                [data_raw, data_depth, data_ref], self.device, self.isTrain
+            )
+            return (
+                data_raw,
+                data_ref,
+                data_depth,
+                bl,
+            )
 
         else:
-            data_raw, data_depth, bl = preprocess([data_raw, data_depth], self.device, self.isTrain)
-            return data_raw, data_depth, bl, file_name, dst_path, key 
-
-
+            data_raw, data_depth, bl = preprocess(
+                [data_raw, data_depth], self.device, self.isTrain
+            )
+            return data_raw, data_depth, bl, file_name, dst_path, key
 
     def __len__(self):
         return len(self.raw_list)
-
-

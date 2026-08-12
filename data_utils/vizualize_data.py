@@ -5,11 +5,12 @@
 4. Spot-check a few thumbnails per campaign
 """
 
-import glob, random
+import glob
+import random
 from pathlib import Path
 
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 from PIL import Image
 
 ROOT = Path("data")
@@ -21,12 +22,14 @@ def load_all_manifests():
     for m in glob.glob(str(ROOT / "*" / "*" / "manifest.csv")):
         d = pd.read_csv(m)
         parts = Path(m).parts
-        d["campaign"]   = parts[-3]
+        d["campaign"] = parts[-3]
         d["deployment"] = parts[-2]
-        d["img_path"]   = str(Path(m).parent / "images") + "/" + d["key"] + ".jpg"
+        d["img_path"] = str(Path(m).parent / "images") + "/" + d["key"] + ".jpg"
         rows.append(d)
     if not rows:
-        raise SystemExit("No manifests found under data/. Run pull_dreamsea_data.py first.")
+        raise SystemExit(
+            "No manifests found under data/. Run pull_dreamsea_data.py first."
+        )
     return pd.concat(rows, ignore_index=True)
 
 
@@ -43,7 +46,12 @@ def summary_table(df):
     print(g.to_string())
 
     print("\n=== Per-deployment image counts (top 20) ===")
-    g2 = df.groupby(["campaign", "deployment"]).size().sort_values(ascending=False).head(20)
+    g2 = (
+        df.groupby(["campaign", "deployment"])
+        .size()
+        .sort_values(ascending=False)
+        .head(20)
+    )
     print(g2.to_string())
 
 
@@ -58,11 +66,17 @@ def plot_trajectories(df, out="trajectories.png"):
     for ax, camp in zip(axes.ravel(), camps):
         g = df[df["campaign"] == camp].dropna(subset=["lat", "lon"])
         if g.empty:
-            ax.set_title(f"{camp} (no pose)"); ax.axis("off"); continue
-        sc = ax.scatter(g["lon"], g["lat"], c=g["depth"], s=0.5,
-                        cmap="viridis", rasterized=True)
-        ax.set_title(f"{camp}\n{len(g):,} images, {g['deployment'].nunique()} deployments")
-        ax.set_xlabel("lon"); ax.set_ylabel("lat")
+            ax.set_title(f"{camp} (no pose)")
+            ax.axis("off")
+            continue
+        sc = ax.scatter(
+            g["lon"], g["lat"], c=g["depth"], s=0.5, cmap="viridis", rasterized=True
+        )
+        ax.set_title(
+            f"{camp}\n{len(g):,} images, {g['deployment'].nunique()} deployments"
+        )
+        ax.set_xlabel("lon")
+        ax.set_ylabel("lat")
         ax.set_aspect("equal", adjustable="datalim")
         plt.colorbar(sc, ax=ax, label="depth (m)", shrink=0.8)
 
@@ -94,9 +108,12 @@ def plot_altitude_hist(df, out="altitudes.png"):
 def thumbnail_grid(df, per_campaign=8, out="thumbnails.png"):
     """Random sample of images per campaign for visual eyeballing."""
     camps = sorted(df["campaign"].unique())
-    fig, axes = plt.subplots(len(camps), per_campaign,
-                             figsize=(2 * per_campaign, 2 * len(camps)),
-                             squeeze=False)
+    fig, axes = plt.subplots(
+        len(camps),
+        per_campaign,
+        figsize=(2 * per_campaign, 2 * len(camps)),
+        squeeze=False,
+    )
     for r, camp in enumerate(camps):
         g = df[df["campaign"] == camp]
         sample = g.sample(min(per_campaign, len(g)), random_state=0)
@@ -107,7 +124,8 @@ def thumbnail_grid(df, per_campaign=8, out="thumbnails.png"):
                 ax.imshow(img)
             except Exception:
                 ax.text(0.5, 0.5, "missing", ha="center", va="center")
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
             if c == 0:
                 ax.set_ylabel(camp, fontsize=8)
     plt.tight_layout()

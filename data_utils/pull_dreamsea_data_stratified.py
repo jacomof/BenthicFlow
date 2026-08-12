@@ -7,52 +7,49 @@ Outputs:
   data/<campaign>/<deployment>/manifest.csv   pose metadata
 """
 
-import os, csv, json, time, requests, shutil
+import csv
+import json
+import os
+import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+import requests
+from discover_campaigns import get_platform_id, list_campaigns
 from tqdm import tqdm
 
-from discover_campaigns import get_platform_id, list_campaigns
-
-API   = "https://squidle.org/api"
-ROOT  = Path(os.environ.get("REEF_DATA_SCRATCH_ROOT", "data"))
-TOKEN = os.environ.get("SQUIDLE_TOKEN")           # optional; higher rate limits
-HEAD  = {"X-auth-token": TOKEN} if TOKEN else {}
+API = "https://squidle.org/api"
+ROOT = Path(os.environ.get("REEF_DATA_SCRATCH_ROOT", "data"))
+TOKEN = os.environ.get("SQUIDLE_TOKEN")  # optional; higher rate limits
+HEAD = {"X-auth-token": TOKEN} if TOKEN else {}
 
 
 KEYWORDS = [
     # -- DreamSea-equivalent subset (Sirius, 2009–2015) ---
-    "Scott", 
-    #"Batemans",
+    "Scott",
+    # "Batemans",
     # # --- New South Wales (Temperate Reefs) ---
     # "Stephens",  # Catches Port Stephens
     # "Sydney",    # Catches Sydney Harbour/offshore lines
     # "Jervis",    # Catches Jervis Bay
     # "Solitary",  # Catches Solitary Islands
-
     # # --- Western Australia ---
     # "Rottnest",  # Catches Rottnest Island
     # "Abrolhos",  # Catches Houtman Abrolhos
     # "Jurien",    # Catches Jurien Bay
     # "Ningaloo",  # Catches Ningaloo Reef
-
     # # --- Tasmania & Queensland ---
     # "Tasman",    # Catches Tasman Peninsula / Tasmania
     # "Lizard",    # Catches Lizard Island
     # "Heron",      # Catches Heron Island
     # "SEQueensland",
-
-    # -- Hawaii 
-    #"Hawaii",     # Catches Hawaii deployments
-
+    # -- Hawaii
+    # "Hawaii",     # Catches Hawaii deployments
     # # Great Barrier Reef
     # "GBR",        # Catches some Great Barrier Reef deployments
-
-
-
     # # -- Other / unknown --
     # "PS2",
-
 ]
 PLATFORM_ID = get_platform_id("IMOS AUV Sirius")  # Set to None to keep all platforms.
 USE_THUMBNAILS = False  # True ≈ 5 KB/img, False = full-res ≈ 500 KB/img.
@@ -89,18 +86,23 @@ def deployment_already_downloaded(dep_dir: Path) -> bool:
         return False, 0
 
     # Count lines in manifest (rows, excluding header)
-    with open(manifest_path, 'r') as f:
+    with open(manifest_path, "r") as f:
         manifest_lines = sum(1 for _ in f) - 1
 
     # Quick check: number of images must match
-    downloaded_count = sum(1 for img in img_dir.iterdir()
-                          if img.is_file() and img.suffix.lower() in {".jpg", ".jpeg", ".png"})
+    downloaded_count = sum(
+        1
+        for img in img_dir.iterdir()
+        if img.is_file() and img.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
     if downloaded_count != manifest_lines:
-        print(f"Manifest mismatch for {dep_dir}. Expected {manifest_lines}, got {downloaded_count}")
+        print(
+            f"Manifest mismatch for {dep_dir}. Expected {manifest_lines}, got {downloaded_count}"
+        )
         return False, 0
 
     # Detailed check: verify all images are non-empty
-    with open(manifest_path, 'r') as f:
+    with open(manifest_path, "r") as f:
         reader = csv.DictReader(f)
         for row in reader:
             img_path = img_dir / f"{row['key']}.jpg"
@@ -126,8 +128,11 @@ def cleanup_campaign_to_limit(camp_key: str) -> None:
         if manifest_path.exists():
             img_dir = dep_dir / "images"
             if img_dir.exists():
-                img_count = sum(1 for img in img_dir.iterdir()
-                               if img.is_file() and img.suffix.lower() in {".jpg", ".jpeg", ".png"})
+                img_count = sum(
+                    1
+                    for img in img_dir.iterdir()
+                    if img.is_file() and img.suffix.lower() in {".jpg", ".jpeg", ".png"}
+                )
                 deployments.append((dep_dir.name, dep_dir, img_count))
 
     # Calculate total images
@@ -143,10 +148,14 @@ def cleanup_campaign_to_limit(camp_key: str) -> None:
                 # Would go under limit, so don't remove this one
                 break
             # Remove deployment
-            print(f"Campaign {camp_key} exceeds limit ({total_images} images). Deleting deployment {dep_name} ({dep_count} images)...")
+            print(
+                f"Campaign {camp_key} exceeds limit ({total_images} images). Deleting deployment {dep_name} ({dep_count} images)..."
+            )
             shutil.rmtree(dep_path)
             total_images -= dep_count
-            print(f"  Deleted deployment {camp_key}/{dep_name} ({dep_count} images). Campaign total: {total_images} images.")
+            print(
+                f"  Deleted deployment {camp_key}/{dep_name} ({dep_count} images). Campaign total: {total_images} images."
+            )
 
 
 def campaign_already_downloaded(camp_key: str) -> bool:
@@ -184,7 +193,7 @@ def get(url, params=None, retries=5):
         except Exception:
             if k == retries - 1:
                 raise
-            time.sleep(2 ** k)
+            time.sleep(2**k)
 
 
 def deployments_for_campaign(camp_id):
@@ -196,8 +205,10 @@ def deployments_for_campaign(camp_id):
 
     out, page = [], 1
     while True:
-        j = get(f"{API}/deployment",
-                {"q": json.dumps(q), "page": page, "results_per_page": 200})
+        j = get(
+            f"{API}/deployment",
+            {"q": json.dumps(q), "page": page, "results_per_page": 200},
+        )
         out += j["objects"]
         if page >= j["total_pages"]:
             break
@@ -210,8 +221,9 @@ def media_for_deployment(dep_id):
     q = {"filters": [{"name": "deployment_id", "op": "eq", "val": dep_id}]}
     out, page = [], 1
     while True:
-        j = get(f"{API}/media",
-                {"q": json.dumps(q), "page": page, "results_per_page": 500})
+        j = get(
+            f"{API}/media", {"q": json.dumps(q), "page": page, "results_per_page": 500}
+        )
         out += j["objects"]
         if page >= j["total_pages"]:
             break
@@ -268,16 +280,18 @@ def process_deployment(camp_key, dep):
     rows = []
     for m in media:
         pose = m.get("pose") or {}
-        rows.append({
-            "media_id":  m["id"],
-            "key":       m["key"],
-            "url":       m["path_best_thm"] if USE_THUMBNAILS else m["path_best"],
-            "lat":       pose.get("lat"),
-            "lon":       pose.get("lon"),
-            "alt":       pose.get("alt"),
-            "depth":     pose.get("dep"),
-            "timestamp": m.get("timestamp"),
-        })
+        rows.append(
+            {
+                "media_id": m["id"],
+                "key": m["key"],
+                "url": m["path_best_thm"] if USE_THUMBNAILS else m["path_best"],
+                "lat": pose.get("lat"),
+                "lon": pose.get("lon"),
+                "alt": pose.get("alt"),
+                "depth": pose.get("dep"),
+                "timestamp": m.get("timestamp"),
+            }
+        )
 
     # Write manifest first so metadata survives even if downloads fail
     with open(out_dir / "manifest.csv", "w", newline="") as f:
@@ -287,12 +301,17 @@ def process_deployment(camp_key, dep):
 
     # Parallel image download
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futs = [ex.submit(download_one, r["url"], img_dir / f"{r['key']}.jpg")
-                for r in rows]
-        for _ in tqdm(as_completed(futs), total=len(futs),
-                      desc=f"{camp_key}/{dep_key}", leave=False):
+        futs = [
+            ex.submit(download_one, r["url"], img_dir / f"{r['key']}.jpg") for r in rows
+        ]
+        for _ in tqdm(
+            as_completed(futs),
+            total=len(futs),
+            desc=f"{camp_key}/{dep_key}",
+            leave=False,
+        ):
             pass
-    
+
     print(f"  Finished {camp_key}/{dep_key}: {len(rows)} images downloaded.")
     return len(rows)
 
@@ -300,7 +319,7 @@ def process_deployment(camp_key, dep):
 def main():
     ROOT.mkdir(exist_ok=True)
     campaigns = discover_campaigns()
-    
+
     for camp_key, camp_id in campaigns:
 
         # cleanup_campaign_to_limit(camp_key)
@@ -308,7 +327,7 @@ def main():
         #     print(f"\n{camp_key}: already downloaded. Skipping.")
         #     continue
         # Clean up existing deployments if campaign exceeds limit before downloading new ones
-        
+
         current_campaign_count = 0
         deps = deployments_for_campaign(camp_id)
         print(f"\n{camp_key} (id={camp_id}): {len(deps)} Sirius deployment(s)")
@@ -318,17 +337,20 @@ def main():
             print(f"  Skipping {camp_key} (not ScottReef201503).")
             continue
         for dep in deps:
-            if dep['key'] not in ["r20150330_225013_09_scott_grids_deep_auv2", 
-                           "r20150331_050931_10_scott_long_leg_auv2",
-                           "r20150331_231619_11_scott_repeat_large_200907_25_auv5"]:
-                
+            if dep["key"] not in [
+                "r20150330_225013_09_scott_grids_deep_auv2",
+                "r20150331_050931_10_scott_long_leg_auv2",
+                "r20150331_231619_11_scott_repeat_large_200907_25_auv5",
+            ]:
+
                 print(f"  Skipping deployment {dep['key']} (not in selected list).")
                 continue
             current_campaign_count += process_deployment(camp_key, dep)
             if current_campaign_count >= MAX_IMAGES_PER_CAMPAIGN:
-                print(f"Reached max images for campaign {camp_key}. Stopping further downloads.")
+                print(
+                    f"Reached max images for campaign {camp_key}. Stopping further downloads."
+                )
                 break
-
 
 
 if __name__ == "__main__":

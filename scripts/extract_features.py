@@ -1,9 +1,9 @@
 """Extract DINOv2 patch-token grids natively at 518x518 from raw directories.
 
-Automatically crawls REEF_SCRATCH_ROOT/data_normalized and extracts features 
+Automatically crawls REEF_SCRATCH_ROOT/data_normalized and extracts features
 for all discovered campaigns and deployments.
 
-Outputs raw, uncompressed .npy files to a flat hierarchy to prevent SLURM 
+Outputs raw, uncompressed .npy files to a flat hierarchy to prevent SLURM
 CPU-RAM OOM kills during multiprocessing DataLoader reads.
 """
 
@@ -24,10 +24,12 @@ from tqdm import tqdm
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRATCH_ROOT = Path(os.environ.get(
-    "REEF_SCRATCH_ROOT",
-    PROJECT_ROOT / "scratch",
-))
+SCRATCH_ROOT = Path(
+    os.environ.get(
+        "REEF_SCRATCH_ROOT",
+        PROJECT_ROOT / "scratch",
+    )
+)
 
 DATA_ROOT = PROJECT_ROOT / "data_normalized"
 FEAT_ROOT = SCRATCH_ROOT / "features"
@@ -54,15 +56,19 @@ def load_dinov2(variant: str = "dinov2_vitb14"):
 
 class DirectoryImagesNative(Dataset):
     """Yields preprocessed images directly from a list of Path objects."""
+
     def __init__(self, image_paths: list[Path]):
         self.image_paths = image_paths
-        self.tfm = transforms.Compose([
-            transforms.Resize(NATIVE_SIZE, antialias=True),
-            transforms.CenterCrop(NATIVE_SIZE),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-        ])
+        self.tfm = transforms.Compose(
+            [
+                transforms.Resize(NATIVE_SIZE, antialias=True),
+                transforms.CenterCrop(NATIVE_SIZE),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
 
     def __len__(self):
         return len(self.image_paths)
@@ -121,10 +127,12 @@ def extract_deployment(
 
     valid_feats = feats[valid]
     # We use the filename (e.g., 'PR_001.jpg') as the definitive key for alignment later
-    valid_keys = np.array([p.name for i, p in enumerate(image_paths) if valid[i]], dtype=str)
+    valid_keys = np.array(
+        [p.name for i, p in enumerate(image_paths) if valid[i]], dtype=str
+    )
 
     feat_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Save as raw, uncompressed binary arrays
     np.save(feat_path, valid_feats)
     np.save(keys_path, valid_keys)
@@ -142,16 +150,16 @@ def crawl_data_directory() -> dict[tuple[str, str], list[Path]]:
         if not campaign_dir.is_dir():
             continue
         campaign = campaign_dir.name
-        
+
         for dep_dir in campaign_dir.iterdir():
             if not dep_dir.is_dir():
                 continue
             deployment = dep_dir.name
-            
+
             images = list(dep_dir.glob("*.jpg")) + list(dep_dir.glob("*.png"))
             if images:
                 deployments[(campaign, deployment)] = images
-                
+
     return deployments
 
 

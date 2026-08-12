@@ -10,11 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -41,16 +41,24 @@ DEPTH_ROOT_DPF = Path("./depth-dpf")
 #     DATA_NORM / "ScottReef201503/r20150331_050931_10_scott_long_leg_auv2/PR_20150331_053958_722_LC16.jpg",
 # ]
 IMAGES = [
-    DATA_NORM / "Batemans201411/r20141112_004500_02_Tollgates_site4sz_dense/PR_20141112_005105_839_LC16.jpg",
-    DATA_NORM / "Hawaii201801/r20180203_182731_SS12_waikoloa_broad_cross_200_150_c_shallow/PR_20180203_183824_386_LC16.jpg",
-    DATA_NORM / "ScottReef201503/r20150330_225013_09_scott_grids_deep_auv2/PR_20150330_225510_723_LC16.jpg",
+    DATA_NORM
+    / "Batemans201411/r20141112_004500_02_Tollgates_site4sz_dense/PR_20141112_005105_839_LC16.jpg",
+    DATA_NORM
+    / "Hawaii201801/r20180203_182731_SS12_waikoloa_broad_cross_200_150_c_shallow/PR_20180203_183824_386_LC16.jpg",
+    DATA_NORM
+    / "ScottReef201503/r20150330_225013_09_scott_grids_deep_auv2/PR_20150330_225510_723_LC16.jpg",
 ]
-SITES = ["Batemans", "Hawaii", "Scott Reef"]        # one header per column pair
+SITES = ["Batemans", "Hawaii", "Scott Reef"]  # one header per column pair
 # Rotated ylabels must be shorter than the ~45 pt row pitch at 8.45 pt, so
 # the BenthicFlow labels are hyphenated onto extra lines (first line renders
 # outermost).
-ROW_LABELS = ["Reference", "FLUX.2-dev", "Benthic-\nFlow\n(Ours)",
-              "Reference\n(DPF-Net)", "Benthic-\nFlow-DPF\n(Ours)"]
+ROW_LABELS = [
+    "Reference",
+    "FLUX.2-dev",
+    "Benthic-\nFlow\n(Ours)",
+    "Reference\n(DPF-Net)",
+    "Benthic-\nFlow-DPF\n(Ours)",
+]
 
 CFM_CKPT = CKPT_ROOT / "unet_cfm_final" / "best_model.pt"
 RAE_CKPT = CKPT_ROOT / "rae" / "last.pt"
@@ -65,23 +73,30 @@ OUT_DIR = FIG_ROOT / "qualitative_comparison"
 ROWS_DIR = OUT_DIR / "rows"
 
 PATCH = 14
-DINO_NATIVE = 518                       # reef feature-extraction resolution
-DINO_NATIVE_DPF = 266                   # features-dpf extraction resolution
+DINO_NATIVE = 518  # reef feature-extraction resolution
+DINO_NATIVE_DPF = 266  # features-dpf extraction resolution
 
 # ECCV 2026 (LNCS): build at the exact 122 mm text width (see panorama_tsne
 # .py). Fonts are 30% larger than the at-\textwidth sizing because this figure
 # is placed side by side with another one, so LaTeX scales it down.
 ECCV_TEXTWIDTH_IN = 122 / 25.4
-plt.rcParams.update({
-    "font.family": "serif",
-    "font.serif": ["Times New Roman", "Nimbus Roman", "STIXGeneral", "DejaVu Serif"],
-    "mathtext.fontset": "stix",
-    "font.size": 10.4,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "pdf.fonttype": 42,
-    "ps.fonttype": 42,
-})
+plt.rcParams.update(
+    {
+        "font.family": "serif",
+        "font.serif": [
+            "Times New Roman",
+            "Nimbus Roman",
+            "STIXGeneral",
+            "DejaVu Serif",
+        ],
+        "mathtext.fontset": "stix",
+        "font.size": 10.4,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+    }
+)
 
 
 @torch.no_grad()
@@ -89,12 +104,15 @@ def pooled_dino(dino_model, pil_img, native):
     """Mean-pooled DINOv2 patch embedding, replicating extract_features.py's
     Resize(native) + CenterCrop(native) preprocessing -> [1, 768]."""
     from torchvision import transforms
-    tfm = transforms.Compose([
-        transforms.Resize(native, antialias=True),
-        transforms.CenterCrop(native),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
+
+    tfm = transforms.Compose(
+        [
+            transforms.Resize(native, antialias=True),
+            transforms.CenterCrop(native),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
     x = tfm(pil_img).unsqueeze(0).to(next(dino_model.parameters()).device)
     tokens = dino_model.forward_features(x)["x_norm_patchtokens"]  # [1, N, 768]
     return tokens.mean(dim=1)
@@ -132,7 +150,7 @@ def load_dpf_target_depth(p: Path):
     if not depth_npy.exists():
         return None
     keys = np.load(keys_npy)
-    idx = np.where(keys == p.stem)[0]                  # DPF-Net keys are bare stems
+    idx = np.where(keys == p.stem)[0]  # DPF-Net keys are bare stems
     if len(idx) == 0:
         return None
     depths = np.load(depth_npy, mmap_mode="r")
@@ -157,15 +175,17 @@ def stage_cfm(args, device):
     [0, 1]) and, for the Reference row, Depth-Anything-V2's estimate on the
     raw photo itself."""
     from models.unet_cfm import UNetCFM, cfm_sample_cfg
-    from scripts.train_cfm_cfg import load_rae_frozen, TRAIN_GRID
-    from scripts.extract_features import load_dinov2
     from scripts.extract_depth import load_model as load_dav2
+    from scripts.extract_features import load_dinov2
+    from scripts.train_cfm_cfg import TRAIN_GRID, load_rae_frozen
 
     w, h = Image.open(IMAGES[0]).size
-    lat_h = TRAIN_GRID                                     # 16 -> 224 px
-    lat_w = round(TRAIN_GRID * w / h)                      # aspect-matched, 21
-    print(f"CFM canvas: {lat_h}x{lat_w} latent -> {lat_h * PATCH}x{lat_w * PATCH} px "
-          f"(near-native; upsampled at assembly)")
+    lat_h = TRAIN_GRID  # 16 -> 224 px
+    lat_w = round(TRAIN_GRID * w / h)  # aspect-matched, 21
+    print(
+        f"CFM canvas: {lat_h}x{lat_w} latent -> {lat_h * PATCH}x{lat_w * PATCH} px "
+        f"(near-native; upsampled at assembly)"
+    )
 
     model = UNetCFM().to(device)
     model.load_state_dict(torch.load(CFM_CKPT, map_location=device, weights_only=True))
@@ -178,11 +198,18 @@ def stage_cfm(args, device):
     for i, p in enumerate(IMAGES):
         pil = Image.open(p).convert("RGB")
         cond = pooled_dino(dino_model, pil, DINO_NATIVE)
-        z = cfm_sample_cfg(model, cond, canvas_shape=(lat_h, lat_w),
-                           n_steps=args.n_steps, cfg_scale=args.cfg_scale)
+        z = cfm_sample_cfg(
+            model,
+            cond,
+            canvas_shape=(lat_h, lat_w),
+            n_steps=args.n_steps,
+            cfg_scale=args.cfg_scale,
+        )
         rgbd = rae.decoder(model.denormalize(z).permute(0, 2, 3, 1).contiguous())
         save_rgb(rgbd[0, :3], ROWS_DIR / f"cfm_{i}.png")
-        np.save(ROWS_DIR / f"cfm_{i}_depth.npy", rgbd[0, 3].cpu().numpy().astype(np.float32))
+        np.save(
+            ROWS_DIR / f"cfm_{i}_depth.npy", rgbd[0, 3].cpu().numpy().astype(np.float32)
+        )
 
         ref_depth = dav2_depth_of(dav2, pil)
         np.save(ROWS_DIR / f"ref_{i}_depth.npy", ref_depth)
@@ -191,18 +218,20 @@ def stage_cfm(args, device):
 
 def stage_dpf(args, device):
     """BenthicFlow-DPF row (in-process since the DPF-Net unification; formerly
-a separate-repo subprocess): conditioned on the pooled DINO of the
-DPF-enhanced counterpart (Resize(266) + CenterCrop(266), exactly the
-features-dpf extraction pipeline) and sampled at the DPF-NATIVE 19x19
-latent (266 px decoded, the training-domain scale of the 256 px enhanced
-"""
+    a separate-repo subprocess): conditioned on the pooled DINO of the
+    DPF-enhanced counterpart (Resize(266) + CenterCrop(266), exactly the
+    features-dpf extraction pipeline) and sampled at the DPF-NATIVE 19x19
+    latent (266 px decoded, the training-domain scale of the 256 px enhanced
+    """
     from models.unet_cfm import UNetCFM, cfm_sample_cfg
-    from scripts.train_cfm_cfg import load_rae_frozen
     from scripts.extract_features import load_dinov2
+    from scripts.train_cfm_cfg import load_rae_frozen
 
-    lat = DINO_NATIVE_DPF // PATCH                         # 19 (square canvas)
-    print(f"DPF-CFM canvas: {lat}x{lat} latent -> {lat * PATCH}x{lat * PATCH} px "
-          f"(native; upsampled at assembly)")
+    lat = DINO_NATIVE_DPF // PATCH  # 19 (square canvas)
+    print(
+        f"DPF-CFM canvas: {lat}x{lat} latent -> {lat * PATCH}x{lat * PATCH} px "
+        f"(native; upsampled at assembly)"
+    )
 
     enhanced = []
     for p in IMAGES:
@@ -212,7 +241,9 @@ latent (266 px decoded, the training-domain scale of the 256 px enhanced
         enhanced.append(q)
 
     model = UNetCFM().to(device)
-    model.load_state_dict(torch.load(CFM_CKPT_DPF, map_location=device, weights_only=True))
+    model.load_state_dict(
+        torch.load(CFM_CKPT_DPF, map_location=device, weights_only=True)
+    )
     model.eval()
     # Explicit softplus head: this process runs base-variant, so ConvDecoder
     # Config's REEF_VARIANT-driven default would silently decode this DPF
@@ -223,17 +254,28 @@ latent (266 px decoded, the training-domain scale of the 256 px enhanced
     torch.manual_seed(args.seed)
     for i, q in enumerate(enhanced):
         cond = pooled_dino(dino_model, Image.open(q).convert("RGB"), DINO_NATIVE_DPF)
-        z = cfm_sample_cfg(model, cond, canvas_shape=(lat, lat),
-                           n_steps=args.n_steps, cfg_scale=args.cfg_scale)
+        z = cfm_sample_cfg(
+            model,
+            cond,
+            canvas_shape=(lat, lat),
+            n_steps=args.n_steps,
+            cfg_scale=args.cfg_scale,
+        )
         rgbd = rae.decoder(model.denormalize(z).permute(0, 2, 3, 1).contiguous())
         save_rgb(rgbd[0, :3], ROWS_DIR / f"dpf_{i}.png")
-        np.save(ROWS_DIR / f"dpf_{i}_depth.npy", rgbd[0, 3].cpu().numpy().astype(np.float32))
+        np.save(
+            ROWS_DIR / f"dpf_{i}_depth.npy", rgbd[0, 3].cpu().numpy().astype(np.float32)
+        )
         print(f"  saved dpf_{i}_depth.npy")
 
 
 def stage_flux(args, device):
     """FLUX.2-dev (4-bit) row: full uncropped frame as reference + REEF_PROMPT."""
-    from scripts.flux_generation import build_pipeline, REEF_PROMPT, resize_to_multiple_of_16
+    from scripts.flux_generation import (
+        REEF_PROMPT,
+        build_pipeline,
+        resize_to_multiple_of_16,
+    )
 
     w, h = Image.open(IMAGES[0]).size
     flux_h = args.flux_size
@@ -246,7 +288,8 @@ def stage_flux(args, device):
         out = pipe(
             prompt=REEF_PROMPT,
             image=[ref],
-            height=flux_h, width=flux_w,
+            height=flux_h,
+            width=flux_w,
             num_inference_steps=args.flux_steps,
             guidance_scale=args.flux_guidance,
             generator=torch.Generator(device).manual_seed(args.seed + i),
@@ -316,7 +359,9 @@ def stage_assemble(args):
     for p in IMAGES:
         q = DATA_NORM_DPF / p.parts[-3] / p.parts[-2] / p.name
         if q.exists():
-            enh.append(np.asarray(Image.open(q).convert("RGB").resize(up_size, Image.LANCZOS)))
+            enh.append(
+                np.asarray(Image.open(q).convert("RGB").resize(up_size, Image.LANCZOS))
+            )
         else:
             print(f"[warn] missing enhanced counterpart {q} -- gray placeholder")
             enh.append(np.full((up_size[1], up_size[0], 3), 200, dtype=np.uint8))
@@ -333,26 +378,33 @@ def stage_assemble(args):
         dpf_depth.append(d if d is None else resize_depth_array(d, up_size))
 
     rows = [
-        interleave([np.asarray(Image.open(p).convert("RGB")) for p in IMAGES],
-                   [depth01_cell(cached_depth_arr("ref", i)) for i in range(n)]),
-        interleave([cached_rgb("flux", i) for i in range(n)],
-                   [("empty",) for _ in range(n)]),
-        interleave([cached_rgb("cfm", i, resize=up_size) for i in range(n)],
-                   [depth01_cell(d) for d in cfm_depth]),
-        interleave(enh,
-                   [depth_metric_cell(d) for d in enh_depth]),
-        interleave([cached_rgb("dpf", i, resize=up_size) for i in range(n)],
-                   [depth_metric_cell(d) for d in dpf_depth]),
+        interleave(
+            [np.asarray(Image.open(p).convert("RGB")) for p in IMAGES],
+            [depth01_cell(cached_depth_arr("ref", i)) for i in range(n)],
+        ),
+        interleave(
+            [cached_rgb("flux", i) for i in range(n)], [("empty",) for _ in range(n)]
+        ),
+        interleave(
+            [cached_rgb("cfm", i, resize=up_size) for i in range(n)],
+            [depth01_cell(d) for d in cfm_depth],
+        ),
+        interleave(enh, [depth_metric_cell(d) for d in enh_depth]),
+        interleave(
+            [cached_rgb("dpf", i, resize=up_size) for i in range(n)],
+            [depth_metric_cell(d) for d in dpf_depth],
+        ),
     ]
 
-    sep = 0.18                                    # separator gap, in cell heights
+    sep = 0.18  # separator gap, in cell heights
     cell_w = ECCV_TEXTWIDTH_IN / n_cols
     cell_h = cell_w / aspect
     fig_h = (len(rows) + sep) * cell_h * 1.02 + 0.18
     fig = plt.figure(figsize=(ECCV_TEXTWIDTH_IN, fig_h))
-    gs = fig.add_gridspec(6, n_cols, height_ratios=[1, 1, 1, sep, 1, 1],
-                          wspace=0.03, hspace=0.05)
-    grid_rows = [0, 1, 2, 4, 5]                   # gridspec row per image row
+    gs = fig.add_gridspec(
+        6, n_cols, height_ratios=[1, 1, 1, sep, 1, 1], wspace=0.03, hspace=0.05
+    )
+    grid_rows = [0, 1, 2, 4, 5]  # gridspec row per image row
 
     axes = np.empty((len(rows), n_cols), dtype=object)
     for r, gr in enumerate(grid_rows):
@@ -365,7 +417,8 @@ def stage_assemble(args):
                 _, arr, vmin, vmax, cmap = cell
                 ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax)
             # "empty": leave the cell blank (FLUX has no depth output).
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
             for s in ax.spines.values():
                 s.set_visible(False)
             axes[r, c] = ax
@@ -373,17 +426,29 @@ def stage_assemble(args):
 
     # Horizontal rule through the spacer row: reef domain above, DPF below.
     y = (axes[2, 0].get_position().y0 + axes[3, 0].get_position().y1) / 2
-    fig.add_artist(plt.Line2D([axes[2, 0].get_position().x0,
-                               axes[2, -1].get_position().x1], [y, y],
-                              transform=fig.transFigure, color="0.45", lw=0.6))
+    fig.add_artist(
+        plt.Line2D(
+            [axes[2, 0].get_position().x0, axes[2, -1].get_position().x1],
+            [y, y],
+            transform=fig.transFigure,
+            color="0.45",
+            lw=0.6,
+        )
+    )
 
     # One site header centred over each column pair (positions are final once
     # the gridspec is built; no tight_layout that would move them afterwards).
     for s, site in enumerate(SITES):
         left = axes[0, 2 * s].get_position()
         right = axes[0, 2 * s + 1].get_position()
-        fig.text((left.x0 + right.x1) / 2, left.y1 + 0.012, site,
-                 ha="center", va="bottom", fontsize=9.75)
+        fig.text(
+            (left.x0 + right.x1) / 2,
+            left.y1 + 0.012,
+            site,
+            ha="center",
+            va="bottom",
+            fontsize=9.75,
+        )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
@@ -394,10 +459,16 @@ def stage_assemble(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--stage", required=True, choices=["cfm", "dpf", "flux", "assemble"])
+    ap.add_argument(
+        "--stage", required=True, choices=["cfm", "dpf", "flux", "assemble"]
+    )
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--n-steps", type=int, default=None,
-                    help="CFM Euler steps (default: 1000 for --stage cfm, 50 for --stage dpf)")
+    ap.add_argument(
+        "--n-steps",
+        type=int,
+        default=None,
+        help="CFM Euler steps (default: 1000 for --stage cfm, 50 for --stage dpf)",
+    )
     ap.add_argument("--cfg-scale", type=float, default=3.0)
     ap.add_argument("--flux-steps", type=int, default=28)
     ap.add_argument("--flux-guidance", type=float, default=4.0)
@@ -415,4 +486,6 @@ if __name__ == "__main__":
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         ROWS_DIR.mkdir(parents=True, exist_ok=True)
-        {"cfm": stage_cfm, "dpf": stage_dpf, "flux": stage_flux}[args.stage](args, device)
+        {"cfm": stage_cfm, "dpf": stage_dpf, "flux": stage_flux}[args.stage](
+            args, device
+        )

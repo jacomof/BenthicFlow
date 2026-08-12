@@ -1,8 +1,8 @@
+import CT_UNet
+import PFGM
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import CT_UNet
-import PFGM
 
 
 class FeatureFusionModule(nn.Module):
@@ -11,12 +11,12 @@ class FeatureFusionModule(nn.Module):
         self.weight_unet = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
         self.weight_vae = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
 
     def forward(self, unet_features, vae_features):
@@ -25,6 +25,7 @@ class FeatureFusionModule(nn.Module):
         fused_features = weights_unet * unet_features + weights_vae * vae_features
 
         return fused_features
+
 
 class TotalNetwork(nn.Module):
     def __init__(self, device):
@@ -39,7 +40,6 @@ class TotalNetwork(nn.Module):
         self.OutLayer = CT_UNet.OutConv(16, 3)
         self.OutLayer.to(self.device)
 
-
     def forward(self, x, B, depth_abs, beta_D, beta_B):
         Unet_feature = self.EncNet(x)
         VAE_feature = self.VAENet(x, B, depth_abs, beta_D, beta_B)
@@ -51,18 +51,18 @@ class TotalNetwork(nn.Module):
 
     def set_optimizer(self, lr=0.001):
         parameters = [
-            {'params': self.VAENet.parameters(), 'lr': lr},
-            {'params': self.EncNet.parameters(), 'lr': lr},
-            {'params': self.Fusion.parameters(), 'lr': lr},
-            {'params': self.OutLayer.parameters(), 'lr': lr}
+            {"params": self.VAENet.parameters(), "lr": lr},
+            {"params": self.EncNet.parameters(), "lr": lr},
+            {"params": self.Fusion.parameters(), "lr": lr},
+            {"params": self.OutLayer.parameters(), "lr": lr},
         ]
         self.optimizer = optim.Adam(parameters)
 
     def get_train_parameters(self, lr=0.001):
         parameters = [
-            {'params': self.VAENet.parameters(), 'lr': lr},
-            {'params': self.EncNet.parameters(), 'lr': lr},
-            {'params': self.Fusion.parameters(), 'lr': lr},
-            {'params': self.OutLayer.parameters(), 'lr': lr}
+            {"params": self.VAENet.parameters(), "lr": lr},
+            {"params": self.EncNet.parameters(), "lr": lr},
+            {"params": self.Fusion.parameters(), "lr": lr},
+            {"params": self.OutLayer.parameters(), "lr": lr},
         ]
         return parameters

@@ -1,6 +1,6 @@
 """REEF model components."""
 
-from .rae import DepthEncoder, RAE
-from .losses import RAELoss, Discriminator
+from .losses import Discriminator, RAELoss
+from .rae import RAE, DepthEncoder
 
 __all__ = ["DepthEncoder", "RAE", "RAELoss", "Discriminator"]

@@ -5,41 +5,50 @@ Kernel Inception Distance (KID) metrics.
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import argparse
+import csv
+import datetime
+import json
+import time
+
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-
-from benthicflow import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, \
-    RGB_ROOT
-from models.unet_cfm import UNetCFM, cfm_sample_cfg
-from scripts.train_cfm_cfg import load_rae_frozen
-from torchmetrics.image import FrechetInceptionDistance, KernelInceptionDistance
-from scripts.extract_features import load_dinov2, DirectoryImagesNative
-from scripts.extract_depth import load_model as load_dav2, normalize_depth
-from PIL import Image
-
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
 import torchvision.transforms.functional as TF
-import csv
-import json
-import datetime
-import argparse
-import time
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from torchmetrics.image import FrechetInceptionDistance, KernelInceptionDistance
 from tqdm import tqdm
+
+from benthicflow import (
+    CKPT_ROOT,
+    DEPTH_ROOT,
+    FEAT_ROOT,
+    FIG_ROOT,
+    PROJECT_ROOT,
+    RGB_ROOT,
+    SCRATCH_ROOT,
+)
+from models.unet_cfm import UNetCFM, cfm_sample_cfg
+from scripts.extract_depth import load_model as load_dav2
+from scripts.extract_depth import normalize_depth
+from scripts.extract_features import DirectoryImagesNative, load_dinov2
+from scripts.train_cfm_cfg import load_rae_frozen
 
 # Merged results file, mirroring flux_test_generation.py's flux_eval_results.json.
 RESULTS_JSON = FIG_ROOT / "cfm" / "test_generation" / "eval_results.json"
 
 NATIVE_SIZE = 518
-TRAIN_SIZE  = 224     
-PATCH_SIZE  = 14
+TRAIN_SIZE = 224
+PATCH_SIZE = 14
 NATIVE_GRID = NATIVE_SIZE // PATCH_SIZE
-TRAIN_GRID  = TRAIN_SIZE // PATCH_SIZE
+TRAIN_GRID = TRAIN_SIZE // PATCH_SIZE
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def decode(z_norm, model, rae):
     z = model.denormalize(z_norm)
@@ -48,8 +57,13 @@ def decode(z_norm, model, rae):
 
 
 class CSVSplitDataset(Dataset):
-    def __init__(self, split: str, load_rgb: bool = False, campaign: str = None,
-                 return_full_rgb: bool = False):
+    def __init__(
+        self,
+        split: str,
+        load_rgb: bool = False,
+        campaign: str = None,
+        return_full_rgb: bool = False,
+    ):
         self.train = split == "train"
         # RGB is only needed for the generation reference grid, not for CFM
         # training/eval. Default off so we don't pay the (large) RGB read per step.
@@ -76,7 +90,11 @@ class CSVSplitDataset(Dataset):
                 # the constructor's `campaign` filter argument and leave it set
                 # to the last row's campaign, silently breaking per-campaign
                 # selection (every campaign would resolve to the same subset).
-                row_campaign, deployment, rel_path = row.get("campaign"), row.get("deployment"), row.get("path")
+                row_campaign, deployment, rel_path = (
+                    row.get("campaign"),
+                    row.get("deployment"),
+                    row.get("path"),
+                )
                 if not all([row_campaign, deployment, rel_path]):
                     raise ValueError(f"Missing required fields in CSV row: {row}")
 
@@ -87,8 +105,12 @@ class CSVSplitDataset(Dataset):
                 dino_npy = FEAT_ROOT / row_campaign / f"{deployment}.npy"
                 rgb_npy = RGB_ROOT / row_campaign / f"{deployment}.npy"
 
-                if not all([p.exists() for p in [depth_npy, keys_npy, dino_npy, rgb_npy]]):
-                    raise FileNotFoundError(f"Missing depth/DINO/RGB files for {dep_key}: {depth_npy}, {keys_npy}, {dino_npy}, {rgb_npy}")
+                if not all(
+                    [p.exists() for p in [depth_npy, keys_npy, dino_npy, rgb_npy]]
+                ):
+                    raise FileNotFoundError(
+                        f"Missing depth/DINO/RGB files for {dep_key}: {depth_npy}, {keys_npy}, {dino_npy}, {rgb_npy}"
+                    )
 
                 if dep_key not in depth_key_cache:
                     keys = np.load(keys_npy)
@@ -99,7 +121,14 @@ class CSVSplitDataset(Dataset):
 
                 filename = Path(rel_path).name
                 if filename in depth_key_cache[dep_key]:
-                    self.records.append((row_campaign, deployment, rel_path, depth_key_cache[dep_key][filename]))
+                    self.records.append(
+                        (
+                            row_campaign,
+                            deployment,
+                            rel_path,
+                            depth_key_cache[dep_key][filename],
+                        )
+                    )
 
         # Optionally restrict to a single campaign (per-campaign conditional FID).
         if campaign is not None:
@@ -111,7 +140,8 @@ class CSVSplitDataset(Dataset):
         # RGB is preprocessed (Resize+CenterCrop baked in) and stored as uint8
         # arrays, so no PIL transform is needed at load time.
 
-    def __len__(self) -> int: return len(self.records)
+    def __len__(self) -> int:
+        return len(self.records)
 
     def __getitem__(self, i: int):
         campaign, deployment, rel_path, idx = self.records[i]
@@ -135,12 +165,12 @@ class CSVSplitDataset(Dataset):
         rgb = torch.empty(0)
         full_rgb = torch.empty(0)
         if self.load_rgb or self.return_full_rgb:
-            rgb_slice = np.array(rgb_arr[idx], copy=True)                      # [S, S, 3] uint8
+            rgb_slice = np.array(rgb_arr[idx], copy=True)  # [S, S, 3] uint8
             if self.load_rgb:
                 rgb = torch.from_numpy(rgb_slice).permute(2, 0, 1).float().div_(255.0)
             if self.return_full_rgb:
                 # Uncropped native view, kept uint8 (PIL-ready, 4x lighter to collate).
-                full_rgb = torch.from_numpy(rgb_slice)                         # [S, S, 3] uint8
+                full_rgb = torch.from_numpy(rgb_slice)  # [S, S, 3] uint8
 
         # Grid-Snapped Crop logic
         if self.train:
@@ -178,6 +208,7 @@ class _DINOv2CLS(torch.nn.Module):
     DINOv2 requires H and W to be multiples of its patch size (14), so we
     resize any off-grid input before forwarding.
     """
+
     _PATCH = 14
 
     def __init__(self, model):
@@ -185,7 +216,7 @@ class _DINOv2CLS(torch.nn.Module):
         self.model = model
 
     _MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-    _STD  = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    _STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
     def forward(self, x):
         # probe dummy from torchmetrics is uint8 on CPU; real images are float on DEVICE
@@ -193,38 +224,42 @@ class _DINOv2CLS(torch.nn.Module):
         h, w = x.shape[-2:]
         h14, w14 = (h // self._PATCH) * self._PATCH, (w // self._PATCH) * self._PATCH
         if h14 != h or w14 != w:
-            x = torch.nn.functional.interpolate(x, size=(h14, w14), mode="bilinear", align_corners=False)
+            x = torch.nn.functional.interpolate(
+                x, size=(h14, w14), mode="bilinear", align_corners=False
+            )
         mean = self._MEAN.to(x.device)
-        std  = self._STD.to(x.device)
+        std = self._STD.to(x.device)
         return self.model.forward_features((x - mean) / std)["x_norm_clstoken"]
 
 
 @torch.no_grad()
 def dino_patch_embed(model, x):
     """DINOv2 patch tokens for a [B, 3, H, W] float batch in [0,1].
-Mirrors _DINOv2CLS's preprocessing (resize to a multiple of the patch size,
-ImageNet normalise) but returns the per-patch tokens x_norm_patchtokens
-([B, num_patches, embed_dim]) instead of the CLS token. Callers mean-pool
-these to one [D] vector per image for the content-fidelity cosine similarity
-"""
+    Mirrors _DINOv2CLS's preprocessing (resize to a multiple of the patch size,
+    ImageNet normalise) but returns the per-patch tokens x_norm_patchtokens
+    ([B, num_patches, embed_dim]) instead of the CLS token. Callers mean-pool
+    these to one [D] vector per image for the content-fidelity cosine similarity
+    """
     _PATCH = 14
     x = x.float().to(next(model.parameters()).device)
     h, w = x.shape[-2:]
     h14, w14 = (h // _PATCH) * _PATCH, (w // _PATCH) * _PATCH
     if h14 != h or w14 != w:
-        x = torch.nn.functional.interpolate(x, size=(h14, w14), mode="bilinear", align_corners=False)
+        x = torch.nn.functional.interpolate(
+            x, size=(h14, w14), mode="bilinear", align_corners=False
+        )
     mean = torch.tensor([0.485, 0.456, 0.406], device=x.device).view(1, 3, 1, 1)
-    std  = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(1, 3, 1, 1)
     return model.forward_features((x - mean) / std)["x_norm_patchtokens"]
 
 
 class DepthConsistency:
     """Self-consistency between the generated depth channel and Depth-Anything-V2's
-depth estimate on the *generated* RGB image.
-The generator emits an RGB-D sample; a physically coherent sample should have
-a depth channel that agrees with what a monocular depth estimator would infer
-from the RGB alone. We run DAv2 (the same variant/output space used to build
-"""
+    depth estimate on the *generated* RGB image.
+    The generator emits an RGB-D sample; a physically coherent sample should have
+    a depth channel that agrees with what a monocular depth estimator would infer
+    from the RGB alone. We run DAv2 (the same variant/output space used to build
+    """
 
     def __init__(self, dav2_run, size=TRAIN_SIZE):
         self.run = dav2_run
@@ -243,10 +278,13 @@ from the RGB alone. We run DAv2 (the same variant/output space used to build
         preds = self.run(pil)  # list of HxW float32 np arrays (raw predicted_depth)
         out = []
         for p in preds:
-            p = np.squeeze(np.ascontiguousarray(p))   # drop any leading singleton dims -> [H, W]
+            p = np.squeeze(
+                np.ascontiguousarray(p)
+            )  # drop any leading singleton dims -> [H, W]
             t = torch.from_numpy(np.ascontiguousarray(p)).float()[None, None]
-            t = torch.nn.functional.interpolate(t, size=(self.size, self.size),
-                                                mode="bilinear", align_corners=False)
+            t = torch.nn.functional.interpolate(
+                t, size=(self.size, self.size), mode="bilinear", align_corners=False
+            )
             out.append(t[0, 0])
         return torch.stack(out)
 
@@ -264,8 +302,8 @@ from the RGB alone. We run DAv2 (the same variant/output space used to build
             pred = self._predict(gen_rgb)
         if pred.dim() == 4:
             pred = pred.squeeze(1)
-        pred = pred.to(gen_depth.device)                           # [B, S, S]
-        target = gen_depth.detach().squeeze(1).to(pred.dtype)      # [B, S, S]
+        pred = pred.to(gen_depth.device)  # [B, S, S]
+        target = gen_depth.detach().squeeze(1).to(pred.dtype)  # [B, S, S]
         b = pred.shape[0]
         p = pred.reshape(b, -1)
         t = target.reshape(b, -1)
@@ -279,12 +317,12 @@ from the RGB alone. We run DAv2 (the same variant/output space used to build
         cov = (pc * tc).sum(dim=1)
 
         # Least-squares affine alignment of pred onto target, then RMSE.
-        s = cov / var_p.clamp_min(eps)                            # [B]
-        shift = mt.squeeze(1) - s * mp.squeeze(1)                 # [B]
+        s = cov / var_p.clamp_min(eps)  # [B]
+        shift = mt.squeeze(1) - s * mp.squeeze(1)  # [B]
         aligned = s[:, None] * p + shift[:, None]
-        rmse = torch.sqrt(((aligned - t) ** 2).mean(dim=1))       # [B]
+        rmse = torch.sqrt(((aligned - t) ** 2).mean(dim=1))  # [B]
 
-        pearson = cov / (var_p.sqrt() * var_t.sqrt() + eps)       # [B] in [-1, 1]
+        pearson = cov / (var_p.sqrt() * var_t.sqrt() + eps)  # [B] in [-1, 1]
 
         self.si_rmse_sum += float(rmse.sum().item())
         self.pearson_sum += float(pearson.sum().item())
@@ -295,63 +333,80 @@ from the RGB alone. We run DAv2 (the same variant/output space used to build
         """{'depth_si_rmse', 'depth_pearson', 'depth_std'} (+suffix on each key);
         None values if nothing was seen. Pass suffix='_real' for the real-pair
         ceiling so it can live beside the generated scores in one dict."""
-        keys = [f"depth_si_rmse{suffix}", f"depth_pearson{suffix}", f"depth_std{suffix}"]
+        keys = [
+            f"depth_si_rmse{suffix}",
+            f"depth_pearson{suffix}",
+            f"depth_std{suffix}",
+        ]
         if self.n == 0:
             return dict.fromkeys(keys)
-        return dict(zip(keys, [self.si_rmse_sum / self.n,
-                               self.pearson_sum / self.n,
-                               self.target_std_sum / self.n]))
+        return dict(
+            zip(
+                keys,
+                [
+                    self.si_rmse_sum / self.n,
+                    self.pearson_sum / self.n,
+                    self.target_std_sum / self.n,
+                ],
+            )
+        )
 
 
 @torch.no_grad()
 def dav2_fullview_depth_crop(dav2_run, full_rgb_uint8, crop_yx):
     """Recompute the training depth targets on the fly, protocol-matched.
-Reproduces extract_depth.py's target pipeline exactly: DAv2 on the *entire*
-518x518 view, per-image min-max normalisation over the full view
-(normalize_depth, i.e. normalise-before-crop as in training), then the same
-crop the dataloader applied to this sample (crop_yx from
-"""
+    Reproduces extract_depth.py's target pipeline exactly: DAv2 on the *entire*
+    518x518 view, per-image min-max normalisation over the full view
+    (normalize_depth, i.e. normalise-before-crop as in training), then the same
+    crop the dataloader applied to this sample (crop_yx from
+    """
     pil = [Image.fromarray(img.numpy()) for img in full_rgb_uint8]
     preds = dav2_run(pil)  # list of HxW float32 arrays (raw predicted_depth)
     out = []
     for p, (y0, x0) in zip(preds, crop_yx.tolist()):
-        d = normalize_depth(np.squeeze(np.asarray(p)))            # [518, 518] in [0, 1]
+        d = normalize_depth(np.squeeze(np.asarray(p)))  # [518, 518] in [0, 1]
         t = torch.from_numpy(d)[y0 : y0 + TRAIN_SIZE, x0 : x0 + TRAIN_SIZE]
         out.append(t)
     return torch.stack(out)
 
 
 def generate_batch_unconditionally(cfm_model, rae_model, batch_size, n_steps):
-        null = cfm_model.null_cond.unsqueeze(0).expand(batch_size, -1)            # [n, 768]
-        z_cond = cfm_sample_cfg(cfm_model, null, n_steps=n_steps)
-        gen_image_batch, gen_depth_batch = decode(z_cond, cfm_model, rae_model)
-        return gen_image_batch, gen_depth_batch
+    null = cfm_model.null_cond.unsqueeze(0).expand(batch_size, -1)  # [n, 768]
+    z_cond = cfm_sample_cfg(cfm_model, null, n_steps=n_steps)
+    gen_image_batch, gen_depth_batch = decode(z_cond, cfm_model, rae_model)
+    return gen_image_batch, gen_depth_batch
 
 
 def generate_batch_conditionally(cfm_model, rae_model, cond, n_steps):
-        # cond: [B, 768] global DINO vector, the train-time conditioning
-        # (dino grid mean-pooled over space; see train_cfm_cfg.py).
-        z_cond = cfm_sample_cfg(cfm_model, cond, n_steps=n_steps)
-        gen_image_batch, gen_depth_batch = decode(z_cond, cfm_model, rae_model)
-        return gen_image_batch, gen_depth_batch
+    # cond: [B, 768] global DINO vector, the train-time conditioning
+    # (dino grid mean-pooled over space; see train_cfm_cfg.py).
+    z_cond = cfm_sample_cfg(cfm_model, cond, n_steps=n_steps)
+    gen_image_batch, gen_depth_batch = decode(z_cond, cfm_model, rae_model)
+    return gen_image_batch, gen_depth_batch
 
 
 class GenerationMetrics:
     """FID + (optionally) KID sharing a single feature extractor.
-Both torchmetrics metrics take the same `feature` argument (an int for the
-stock InceptionV3, or an nn.Module for a custom extractor), so we build them
-from the same extractor and drive them through one reset/update/compute API.
-This keeps the eval loops metric-agnostic: they update once and get both
-"""
+    Both torchmetrics metrics take the same `feature` argument (an int for the
+    stock InceptionV3, or an nn.Module for a custom extractor), so we build them
+    from the same extractor and drive them through one reset/update/compute API.
+    This keeps the eval loops metric-agnostic: they update once and get both
+    """
 
-    def __init__(self, feature, extractor_label, normalize, with_kid=True, kid_subset_size=50):
+    def __init__(
+        self, feature, extractor_label, normalize, with_kid=True, kid_subset_size=50
+    ):
         self.extractor_label = extractor_label
         self.kid_subset_size = kid_subset_size
-        self.fid = FrechetInceptionDistance(feature=feature, normalize=normalize).to(DEVICE)
+        self.fid = FrechetInceptionDistance(feature=feature, normalize=normalize).to(
+            DEVICE
+        )
         self.kid = (
-            KernelInceptionDistance(feature=feature, normalize=normalize,
-                                    subset_size=kid_subset_size).to(DEVICE)
-            if with_kid else None
+            KernelInceptionDistance(
+                feature=feature, normalize=normalize, subset_size=kid_subset_size
+            ).to(DEVICE)
+            if with_kid
+            else None
         )
 
     def reset(self):
@@ -373,8 +428,14 @@ This keeps the eval loops metric-agnostic: they update once and get both
         count (KID needs `subset_size <= min(#real,#fake)`) so a small campaign
         can't crash the run; below 2 usable samples KID is skipped entirely.
         """
-        out = {"fid": None, "kid_mean": None, "kid_std": None,
-               "kid_subset_size": None, "n_real": n_real, "n_fake": n_fake}
+        out = {
+            "fid": None,
+            "kid_mean": None,
+            "kid_std": None,
+            "kid_subset_size": None,
+            "n_real": n_real,
+            "n_fake": n_fake,
+        }
         try:
             out["fid"] = float(self.fid.compute().item())
         except Exception as e:
@@ -435,11 +496,31 @@ def print_campaign_summary(title, results):
     mean_parts = []
     fids = [m["fid"] for m in results.values() if m.get("fid") is not None]
     kids = [m["kid_mean"] for m in results.values() if m.get("kid_mean") is not None]
-    cossims = [m["dino_pooled_cossim"] for m in results.values() if m.get("dino_pooled_cossim") is not None]
-    mses = [m["dino_pooled_mse"] for m in results.values() if m.get("dino_pooled_mse") is not None]
-    sirmses = [m["depth_si_rmse"] for m in results.values() if m.get("depth_si_rmse") is not None]
-    depth_rs = [m["depth_pearson"] for m in results.values() if m.get("depth_pearson") is not None]
-    depth_r_reals = [m["depth_pearson_real"] for m in results.values() if m.get("depth_pearson_real") is not None]
+    cossims = [
+        m["dino_pooled_cossim"]
+        for m in results.values()
+        if m.get("dino_pooled_cossim") is not None
+    ]
+    mses = [
+        m["dino_pooled_mse"]
+        for m in results.values()
+        if m.get("dino_pooled_mse") is not None
+    ]
+    sirmses = [
+        m["depth_si_rmse"]
+        for m in results.values()
+        if m.get("depth_si_rmse") is not None
+    ]
+    depth_rs = [
+        m["depth_pearson"]
+        for m in results.values()
+        if m.get("depth_pearson") is not None
+    ]
+    depth_r_reals = [
+        m["depth_pearson_real"]
+        for m in results.values()
+        if m.get("depth_pearson_real") is not None
+    ]
     if fids:
         mean_parts.append(f"FID {sum(fids) / len(fids):.4f}")
     if kids:
@@ -486,21 +567,29 @@ def build_metrics(args):
     with_kid = not args.skip_kid
     if args.feature_extractor == "dino":
         dino_judge = load_dinov2()
-        return GenerationMetrics(feature=_DINOv2CLS(dino_judge), extractor_label="DINOv2",
-                                 normalize=False, with_kid=with_kid,
-                                 kid_subset_size=args.kid_subset_size)
-    return GenerationMetrics(feature=2048, extractor_label="InceptionV3",
-                             normalize=True, with_kid=with_kid,
-                             kid_subset_size=args.kid_subset_size)
+        return GenerationMetrics(
+            feature=_DINOv2CLS(dino_judge),
+            extractor_label="DINOv2",
+            normalize=False,
+            with_kid=with_kid,
+            kid_subset_size=args.kid_subset_size,
+        )
+    return GenerationMetrics(
+        feature=2048,
+        extractor_label="InceptionV3",
+        normalize=True,
+        with_kid=with_kid,
+        kid_subset_size=args.kid_subset_size,
+    )
 
 
 def evaluate_unconditional(model, rae, metrics, args, depth_consistency=None):
     """FID/KID between unconditional CFM samples and a matched sample of the test split.
-Both the real reference and the generated set are capped at --sample_size
-(the same global cap gold uses), so this no longer scans the whole test split;
-a matched batch of samples is generated for each real batch until the budget
-is hit.
-"""
+    Both the real reference and the generated set are capped at --sample_size
+    (the same global cap gold uses), so this no longer scans the whole test split;
+    a matched batch of samples is generated for each real batch until the budget
+    is hit.
+    """
     metrics.reset()
     real_depth_consistency = None
     if depth_consistency is not None:
@@ -510,8 +599,13 @@ is hit.
     # shuffle=True: we cap at sample_size and break early, so the subset must be
     # representative across the split rather than the first-N (a single deployment
     # in CSV order). The capped count is small, so the random-read cost is minor.
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size,
-                             shuffle=True, num_workers=args.n_workers, pin_memory=True)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.n_workers,
+        pin_memory=True,
+    )
 
     gen_time, update_time = 0.0, 0.0
     n_real = n_fake = 0
@@ -526,7 +620,9 @@ is hit.
 
             torch.cuda.synchronize()
             t0 = time.time()
-            gen_rgb, gen_depth = generate_batch_unconditionally(model, rae, batch_size=real_rgb.shape[0], n_steps=args.n_steps)
+            gen_rgb, gen_depth = generate_batch_unconditionally(
+                model, rae, batch_size=real_rgb.shape[0], n_steps=args.n_steps
+            )
             torch.cuda.synchronize()
             t1 = time.time()
 
@@ -552,8 +648,10 @@ is hit.
         score.update(depth_consistency.compute())
         score.update(real_depth_consistency.compute(suffix="_real"))
     print(f"Unconditional -- {format_metrics(score)}  (real={n_real}, fake={n_fake})")
-    print(f"Total time -- generation: {gen_time:.1f}s, metric update "
-          f"({metrics.extractor_label} + stats): {update_time:.1f}s")
+    print(
+        f"Total time -- generation: {gen_time:.1f}s, metric update "
+        f"({metrics.extractor_label} + stats): {update_time:.1f}s"
+    )
     return score
 
 
@@ -573,7 +671,8 @@ def save_conditional_debug(campaign, rgb_src, gen_rgb, n_samples):
         axes[0, j].imshow(rgb_src[j].permute(1, 2, 0).cpu().numpy())
         axes[1, j].imshow(gen_rgb[j].clamp(0, 1).permute(1, 2, 0).cpu().numpy())
         for r in (0, 1):
-            axes[r, j].set_xticks([]); axes[r, j].set_yticks([])
+            axes[r, j].set_xticks([])
+            axes[r, j].set_yticks([])
     axes[0, 0].set_ylabel("Conditioning\n(train RGB)", fontsize=10)
     axes[1, 0].set_ylabel("Generated", fontsize=10)
     fig.suptitle(f"Conditional generation — {campaign}", fontsize=12)
@@ -584,7 +683,9 @@ def save_conditional_debug(campaign, rgb_src, gen_rgb, n_samples):
     print(f"[{campaign}] saved debug samples to {out_path}")
 
 
-def save_rae_reconstruction_debug(campaign, rgb_src, recon_rgb, depth_src, recon_depth, n_samples):
+def save_rae_reconstruction_debug(
+    campaign, rgb_src, recon_rgb, depth_src, recon_depth, n_samples
+):
     """Save [source | RAE reconstruction] columns (RGB and depth) for eyeballing.
 
     Rows: source RGB, RAE-reconstructed RGB, source depth, RAE-reconstructed depth.
@@ -602,9 +703,12 @@ def save_rae_reconstruction_debug(campaign, rgb_src, recon_rgb, depth_src, recon
         axes[0, j].imshow(rgb_src[j].clamp(0, 1).permute(1, 2, 0).cpu().numpy())
         axes[1, j].imshow(recon_rgb[j].clamp(0, 1).permute(1, 2, 0).cpu().numpy())
         axes[2, j].imshow(depth_src[j, 0].cpu().numpy(), cmap="turbo", vmin=0, vmax=1)
-        axes[3, j].imshow(recon_depth[j, 0].clamp(0, 1).cpu().numpy(), cmap="turbo", vmin=0, vmax=1)
+        axes[3, j].imshow(
+            recon_depth[j, 0].clamp(0, 1).cpu().numpy(), cmap="turbo", vmin=0, vmax=1
+        )
         for r in range(4):
-            axes[r, j].set_xticks([]); axes[r, j].set_yticks([])
+            axes[r, j].set_xticks([])
+            axes[r, j].set_yticks([])
     axes[0, 0].set_ylabel("Source RGB", fontsize=10)
     axes[1, 0].set_ylabel("RAE RGB", fontsize=10)
     axes[2, 0].set_ylabel("Source depth", fontsize=10)
@@ -628,22 +732,32 @@ def select_campaigns(args):
     if args.campaigns:
         unknown = [c for c in args.campaigns if c not in available]
         if unknown:
-            raise ValueError(f"Unknown campaign(s) {unknown}. Available: {sorted(available)}")
+            raise ValueError(
+                f"Unknown campaign(s) {unknown}. Available: {sorted(available)}"
+            )
         return sorted(c for c in available if c in args.campaigns)
     return sorted(available)
 
 
-def evaluate_conditional_per_campaign(model, rae, metrics, args, depth_consistency=None):
+def evaluate_conditional_per_campaign(
+    model, rae, metrics, args, depth_consistency=None
+):
     """Per-campaign conditional FID/KID, plus the folded-in RAE-reconstruction floor.
-For each campaign: condition generation on that campaign's *train* DINO
-features and compare the generated images against that campaign's *test*
-images. A high per-campaign FID relative to the unconditional FID signals
-the model is not honouring the campaign conditioning.
-"""
+    For each campaign: condition generation on that campaign's *train* DINO
+    features and compare the generated images against that campaign's *test*
+    images. A high per-campaign FID relative to the unconditional FID signals
+    the model is not honouring the campaign conditioning.
+    """
     campaigns = select_campaigns(args)
-    cap_str = "full split" if args.per_campaign_size is None else f"<= {args.per_campaign_size}"
-    print(f"\nConditional + RAE-reconstruction per-campaign FID/KID over {len(campaigns)} "
-          f"campaigns ({cap_str} samples each): {campaigns}")
+    cap_str = (
+        "full split"
+        if args.per_campaign_size is None
+        else f"<= {args.per_campaign_size}"
+    )
+    print(
+        f"\nConditional + RAE-reconstruction per-campaign FID/KID over {len(campaigns)} "
+        f"campaigns ({cap_str} samples each): {campaigns}"
+    )
 
     # One DINOv2 patch model serves both content metrics: the conditional
     # dino_pooled_cossim (source vs generation) and the RAE dino_pooled_mse
@@ -666,9 +780,21 @@ the model is not honouring the campaign conditioning.
     #    (crop-FOV protocol ceiling). This is the reference level for the CFM
     #    *generated* scores, which can only be checked crop-FOV-wise because a
     #    generated sample has no full 518 view.
-    rae_depth_consistency = DepthConsistency(depth_consistency.run) if depth_consistency is not None else None
-    ref_check_depth_consistency = DepthConsistency(depth_consistency.run) if depth_consistency is not None else None
-    real_depth_consistency = DepthConsistency(depth_consistency.run) if depth_consistency is not None else None
+    rae_depth_consistency = (
+        DepthConsistency(depth_consistency.run)
+        if depth_consistency is not None
+        else None
+    )
+    ref_check_depth_consistency = (
+        DepthConsistency(depth_consistency.run)
+        if depth_consistency is not None
+        else None
+    )
+    real_depth_consistency = (
+        DepthConsistency(depth_consistency.run)
+        if depth_consistency is not None
+        else None
+    )
 
     results, rae_results = {}, {}
     for campaign in campaigns:
@@ -677,17 +803,31 @@ the model is not honouring the campaign conditioning.
         # reconstruction reference and the debug-grid / content-metric source.
         # return_full_rgb: the gen+rae pass also gets the uncropped 518 view and the
         # crop offsets, to recompute the protocol-matched DAv2 depth reference.
-        train_ds = CSVSplitDataset(split="test", load_rgb=True, campaign=campaign, return_full_rgb=True)
+        train_ds = CSVSplitDataset(
+            split="test", load_rgb=True, campaign=campaign, return_full_rgb=True
+        )
         test_ds = CSVSplitDataset(split="test", load_rgb=True, campaign=campaign)
         if len(train_ds) == 0 or len(test_ds) < 2:
-            print(f"[skip] {campaign}: train={len(train_ds)} test={len(test_ds)} (need train>0, test>=2)")
+            print(
+                f"[skip] {campaign}: train={len(train_ds)} test={len(test_ds)} (need train>0, test>=2)"
+            )
             continue
         # shuffle=False: the full campaign split is scanned and FID/KID are
         # order-independent; sequential reads keep the big RGB mmaps cheap.
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                                  shuffle=False, num_workers=args.n_workers, pin_memory=True)
-        test_loader = DataLoader(test_ds, batch_size=args.batch_size,
-                                 shuffle=False, num_workers=args.n_workers, pin_memory=True)
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.n_workers,
+            pin_memory=True,
+        )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.n_workers,
+            pin_memory=True,
+        )
 
         metrics.reset()
         rae_metrics.reset()
@@ -713,17 +853,24 @@ the model is not honouring the campaign conditioning.
                 metrics.update(rgb_real, real=True)
                 if real_depth_consistency is not None:
                     # Real-pair depth-consistency ceiling (stored depth target).
-                    real_depth_consistency.update(rgb_real, depth_real.to(DEVICE, non_blocking=True))
+                    real_depth_consistency.update(
+                        rgb_real, depth_real.to(DEVICE, non_blocking=True)
+                    )
                 if DEVICE.type == "cuda":
                     torch.cuda.synchronize()
                 t_prev = time.perf_counter()
                 gpu_time += t_prev - t0
                 n_real += rgb_real.shape[0]
                 pbar.set_postfix(data=f"{data_wait:.1f}s", gpu=f"{gpu_time:.1f}s")
-                if args.per_campaign_size is not None and n_real >= args.per_campaign_size:
+                if (
+                    args.per_campaign_size is not None
+                    and n_real >= args.per_campaign_size
+                ):
                     break
-            print(f"[{campaign}] real: {n_real} imgs -- dataloader wait {data_wait:.1f}s, "
-                  f"gpu update {gpu_time:.1f}s")
+            print(
+                f"[{campaign}] real: {n_real} imgs -- dataloader wait {data_wait:.1f}s, "
+                f"gpu update {gpu_time:.1f}s"
+            )
 
             # ---- one source pass: CFM generation + RAE reconstruction ----
             n_fake = 0
@@ -733,35 +880,49 @@ the model is not honouring the campaign conditioning.
             # faithful to the condition) and MSE vs the RAE reconstruction.
             pooled_cossim_sum, pooled_cossim_n = 0.0, 0
             pooled_cossim_sum_rae, pooled_cossim_n_rae = 0.0, 0
-            for rgb_src, depth, dino, full_rgb, crop_yx in tqdm(train_loader, desc=f"{campaign} gen+rae"):
+            for rgb_src, depth, dino, full_rgb, crop_yx in tqdm(
+                train_loader, desc=f"{campaign} gen+rae"
+            ):
                 rgb_src = rgb_src.to(DEVICE, non_blocking=True)
                 depth = depth.to(DEVICE, non_blocking=True)
-                dino = dino.to(DEVICE, non_blocking=True)              # [B, 16, 16, 768]
-                src_pooled = dino_patch_embed(dino_patch_model, rgb_src).mean(dim=1)  # [B, D], shared
+                dino = dino.to(DEVICE, non_blocking=True)  # [B, 16, 16, 768]
+                src_pooled = dino_patch_embed(dino_patch_model, rgb_src).mean(
+                    dim=1
+                )  # [B, D], shared
 
                 # Protocol-matched depth reference: DAv2 over the full 518 view,
                 # normalised over the full view, then this sample's exact crop --
                 # the same space as the stored targets and the decoded depth.
                 ref_depth = None
                 if depth_consistency is not None:
-                    ref_depth = dav2_fullview_depth_crop(depth_consistency.run, full_rgb, crop_yx).to(DEVICE)  # [B, 224, 224]
+                    ref_depth = dav2_fullview_depth_crop(
+                        depth_consistency.run, full_rgb, crop_yx
+                    ).to(
+                        DEVICE
+                    )  # [B, 224, 224]
                     # Pipeline sanity: recomputed reference vs the stored crop.
                     # Expect r ~= 1; lower means extraction drift on disk.
                     ref_check_depth_consistency.update(rgb_src, depth, pred=ref_depth)
 
                 # -- CFM conditional generation --
-                cond = dino.mean(dim=(1, 2))                           # [B, 768] pooled DINO grid
-                gen_rgb, gen_depth = generate_batch_conditionally(model, rae, cond, args.n_steps)
+                cond = dino.mean(dim=(1, 2))  # [B, 768] pooled DINO grid
+                gen_rgb, gen_depth = generate_batch_conditionally(
+                    model, rae, cond, args.n_steps
+                )
                 metrics.update(gen_rgb, real=False)
                 if depth_consistency is not None:
                     depth_consistency.update(gen_rgb, gen_depth)
-                gen_pooled = dino_patch_embed(dino_patch_model, gen_rgb).mean(dim=1)  # [B, D]
-                cos_per_img = torch.nn.functional.cosine_similarity(src_pooled, gen_pooled, dim=1)  # [B] in [-1, 1]
+                gen_pooled = dino_patch_embed(dino_patch_model, gen_rgb).mean(
+                    dim=1
+                )  # [B, D]
+                cos_per_img = torch.nn.functional.cosine_similarity(
+                    src_pooled, gen_pooled, dim=1
+                )  # [B] in [-1, 1]
                 pooled_cossim_sum += float(cos_per_img.sum().item())
                 pooled_cossim_n += cos_per_img.shape[0]
 
                 # -- RAE round-trip (no flow matching) on the same source batch --
-                rgbd, _ = rae(dino, depth)                            # [B, 4, 224, 224]
+                rgbd, _ = rae(dino, depth)  # [B, 4, 224, 224]
                 recon_rgb = rgbd[:, :3].clamp(0, 1)
                 recon_depth = rgbd[:, 3:4].clamp(0, 1)
                 rae_metrics.update(rgb_src, real=True)
@@ -771,41 +932,66 @@ the model is not honouring the campaign conditioning.
                     # and normalisation as training, so a perfect decoder scores
                     # ~1 here (no DAv2 pass on the recon needed).
                     rae_depth_consistency.update(recon_rgb, recon_depth, pred=ref_depth)
-                recon_pooled = dino_patch_embed(dino_patch_model, recon_rgb).mean(dim=1)  # [B, D]
-                cos_per_img = torch.nn.functional.cosine_similarity(src_pooled, recon_pooled, dim=1)              # [B]
+                recon_pooled = dino_patch_embed(dino_patch_model, recon_rgb).mean(
+                    dim=1
+                )  # [B, D]
+                cos_per_img = torch.nn.functional.cosine_similarity(
+                    src_pooled, recon_pooled, dim=1
+                )  # [B]
                 pooled_cossim_sum_rae += float(cos_per_img.sum().item())
                 pooled_cossim_n_rae += cos_per_img.shape[0]
 
                 if args.debug_samples > 0 and not debug_saved:
-                    save_conditional_debug(campaign, rgb_src, gen_rgb, args.debug_samples)
-                    save_rae_reconstruction_debug(campaign, rgb_src, recon_rgb,
-                                                  depth, recon_depth, args.debug_samples)
+                    save_conditional_debug(
+                        campaign, rgb_src, gen_rgb, args.debug_samples
+                    )
+                    save_rae_reconstruction_debug(
+                        campaign,
+                        rgb_src,
+                        recon_rgb,
+                        depth,
+                        recon_depth,
+                        args.debug_samples,
+                    )
                     debug_saved = True
 
                 n_fake += gen_rgb.shape[0]
-                if args.per_campaign_size is not None and n_fake >= args.per_campaign_size:
+                if (
+                    args.per_campaign_size is not None
+                    and n_fake >= args.per_campaign_size
+                ):
                     break
 
         # -- conditional score (real = test images, fake = CFM generations) --
         score = metrics.compute(n_real, n_fake)
-        score["dino_pooled_cossim"] = pooled_cossim_sum / pooled_cossim_n if pooled_cossim_n > 0 else None
+        score["dino_pooled_cossim"] = (
+            pooled_cossim_sum / pooled_cossim_n if pooled_cossim_n > 0 else None
+        )
         if depth_consistency is not None:
             score.update(depth_consistency.compute())
             score.update(real_depth_consistency.compute(suffix="_real"))
         results[campaign] = score
-        print(f"Conditional [{campaign}]: {format_metrics(score)}  (real={n_real}, fake={n_fake})")
+        print(
+            f"Conditional [{campaign}]: {format_metrics(score)}  (real={n_real}, fake={n_fake})"
+        )
 
         # -- RAE reconstruction score (real = source, fake = reconstructions; equal
         # counts, one reconstruction per source image) --
         rae_score = rae_metrics.compute(n_fake, n_fake)
-        rae_score["dino_pooled_cossim"] = pooled_cossim_sum_rae / pooled_cossim_n_rae if pooled_cossim_n_rae > 0 else None
+        rae_score["dino_pooled_cossim"] = (
+            pooled_cossim_sum_rae / pooled_cossim_n_rae
+            if pooled_cossim_n_rae > 0
+            else None
+        )
         if rae_depth_consistency is not None:
             # depth_* here = recon vs full-view protocol-matched reference (read vs ~1);
             # depth_*_ref_check = recomputed reference vs stored crop (pipeline sanity).
             rae_score.update(rae_depth_consistency.compute())
             rae_score.update(ref_check_depth_consistency.compute(suffix="_ref_check"))
         rae_results[campaign] = rae_score
-        print(f"RAE reconstruction [{campaign}]: {format_metrics(rae_score)}  (real={n_fake}, fake={n_fake})")
+        print(
+            f"RAE reconstruction [{campaign}]: {format_metrics(rae_score)}  (real={n_fake}, fake={n_fake})"
+        )
 
     print_campaign_summary("Conditional per-campaign FID/KID", results)
     print_campaign_summary("RAE reconstruction per-campaign FID/KID", rae_results)
@@ -829,67 +1015,103 @@ def _update_from_loader(loader, metrics, real, size, desc):
 
 def evaluate_gold_standard(metrics, args):
     """FID/KID between real *train* and real *test* images -- the achievable floor.
-No generation is involved: this measures the train/test distribution gap
-(plus finite-sample bias) itself, so any generative FID above it reflects
-model error rather than dataset shift. Reported globally and per campaign so
-it sits directly beside the unconditional and conditional numbers.
-"""
+    No generation is involved: this measures the train/test distribution gap
+    (plus finite-sample bias) itself, so any generative FID above it reflects
+    model error rather than dataset shift. Reported globally and per campaign so
+    it sits directly beside the unconditional and conditional numbers.
+    """
+
     def _loader(split, campaign=None):
         ds = CSVSplitDataset(split=split, load_rgb=True, campaign=campaign)
         # shuffle=True here (unlike the other modes): gold caps at sample_size /
         # per_campaign_size and breaks early, so it needs a representative sample
         # rather than the first-N (which, in CSV order, is a single deployment).
         # The capped count is small, so the random-read cost is negligible.
-        return ds, DataLoader(ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=args.n_workers, pin_memory=True)
+        return ds, DataLoader(
+            ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.n_workers,
+            pin_memory=True,
+        )
 
     # ---- global ----
     metrics.reset()
     _, test_loader = _loader("test")
     _, train_loader = _loader("train")
     with torch.no_grad():
-        n_test = _update_from_loader(test_loader, metrics, True, args.sample_size, "Gold global test")
-        n_train = _update_from_loader(train_loader, metrics, False, args.sample_size, "Gold global train")
+        n_test = _update_from_loader(
+            test_loader, metrics, True, args.sample_size, "Gold global test"
+        )
+        n_train = _update_from_loader(
+            train_loader, metrics, False, args.sample_size, "Gold global train"
+        )
     global_score = metrics.compute(n_test, n_train)
-    print(f"Gold-standard (train vs test) global -- {format_metrics(global_score)}  "
-          f"(test={n_test}, train={n_train})")
+    print(
+        f"Gold-standard (train vs test) global -- {format_metrics(global_score)}  "
+        f"(test={n_test}, train={n_train})"
+    )
 
     # ---- per campaign ----
     campaigns = select_campaigns(args)
-    cap_str = "full split" if args.per_campaign_size is None else f"<= {args.per_campaign_size}"
-    print(f"\nGold-standard per-campaign FID/KID over {len(campaigns)} campaigns "
-          f"({cap_str} samples each): {campaigns}")
+    cap_str = (
+        "full split"
+        if args.per_campaign_size is None
+        else f"<= {args.per_campaign_size}"
+    )
+    print(
+        f"\nGold-standard per-campaign FID/KID over {len(campaigns)} campaigns "
+        f"({cap_str} samples each): {campaigns}"
+    )
 
     results = {}
     for campaign in campaigns:
         test_ds, test_loader = _loader("test", campaign)
         train_ds, train_loader = _loader("train", campaign)
         if len(test_ds) < 2 or len(train_ds) < 2:
-            print(f"[skip] {campaign}: train={len(train_ds)} test={len(test_ds)} (need >=2 each)")
+            print(
+                f"[skip] {campaign}: train={len(train_ds)} test={len(test_ds)} (need >=2 each)"
+            )
             continue
 
         metrics.reset()
         with torch.no_grad():
-            n_test = _update_from_loader(test_loader, metrics, True, args.per_campaign_size, f"{campaign} test")
-            n_train = _update_from_loader(train_loader, metrics, False, args.per_campaign_size, f"{campaign} train")
+            n_test = _update_from_loader(
+                test_loader, metrics, True, args.per_campaign_size, f"{campaign} test"
+            )
+            n_train = _update_from_loader(
+                train_loader,
+                metrics,
+                False,
+                args.per_campaign_size,
+                f"{campaign} train",
+            )
         score = metrics.compute(n_test, n_train)
         results[campaign] = score
-        print(f"Gold-standard [{campaign}]: {format_metrics(score)}  (test={n_test}, train={n_train})")
+        print(
+            f"Gold-standard [{campaign}]: {format_metrics(score)}  (test={n_test}, train={n_train})"
+        )
 
-    print_campaign_summary("Gold-standard per-campaign FID/KID (train vs test)", results)
+    print_campaign_summary(
+        "Gold-standard per-campaign FID/KID (train vs test)", results
+    )
     return {"global": global_score, "per_campaign": results}
 
 
 def main(args):
     metrics = build_metrics(args)
     kid_note = "off" if args.skip_kid else f"on (subset_size={args.kid_subset_size})"
-    print(f"Feature extractor: {metrics.extractor_label}, KID {kid_note}, "
-          f"fid device: {metrics.fid.real_features_sum.device}")
+    print(
+        f"Feature extractor: {metrics.extractor_label}, KID {kid_note}, "
+        f"fid device: {metrics.fid.real_features_sum.device}"
+    )
 
     # Gold standard is real-vs-real, so it needs no CFM/RAE checkpoints.
     if args.mode != "gold":
         model = UNetCFM().to(DEVICE)
-        model.load_state_dict(torch.load(args.cfm_ckpt, map_location=DEVICE, weights_only=True))
+        model.load_state_dict(
+            torch.load(args.cfm_ckpt, map_location=DEVICE, weights_only=True)
+        )
         model.eval()
         rae = load_rae_frozen(args.rae_ckpt, DEVICE)
 
@@ -897,18 +1119,27 @@ def main(args):
     # to the generative modes (gold is real-vs-real with no generated depth). Load
     # the estimator once and reuse it across unconditional + conditional.
     depth_consistency = None
-    if not args.skip_depth_consistency and args.mode in ("unconditional", "conditional", "both", "all"):
+    if not args.skip_depth_consistency and args.mode in (
+        "unconditional",
+        "conditional",
+        "both",
+        "all",
+    ):
         dav2_run = load_dav2(variant=args.dav2_variant, metric=False, processed=False)
         depth_consistency = DepthConsistency(dav2_run)
 
     sections = {}
     if args.mode in ("unconditional", "both", "all"):
-        sections["unconditional"] = evaluate_unconditional(model, rae, metrics, args, depth_consistency)
+        sections["unconditional"] = evaluate_unconditional(
+            model, rae, metrics, args, depth_consistency
+        )
 
     if args.mode in ("conditional", "both", "all"):
         # One pass over each campaign yields both the conditional generation FID/KID
         # and the RAE-reconstruction floor (real vs RAE round-trip, no flow matching).
-        cond_res, rae_res = evaluate_conditional_per_campaign(model, rae, metrics, args, depth_consistency)
+        cond_res, rae_res = evaluate_conditional_per_campaign(
+            model, rae, metrics, args, depth_consistency
+        )
         sections["conditional"] = {"per_campaign": cond_res}
         sections["rae_reconstruction"] = {"per_campaign": rae_res}
 
@@ -934,50 +1165,98 @@ def main(args):
 
 if __name__ == "__main__":
 
-    argparser = argparse.ArgumentParser(description="Test generative quality of CFM with different metric.")
+    argparser = argparse.ArgumentParser(
+        description="Test generative quality of CFM with different metric."
+    )
 
     argparser.add_argument("--rae_ckpt", type=str, help="Path to the RAE checkpoint.")
     argparser.add_argument("--cfm_ckpt", type=str, help="Path to the CFM checkpoint.")
-    argparser.add_argument("--sample_size", type=int, default=100,
-                           help="Global sample cap: max real/generated images for the unconditional "
-                                "and gold-global evals (per-campaign uses --per_campaign_size).")
-    argparser.add_argument("--batch_size", type=int, default=8, help="Batch size for generation.")
-    argparser.add_argument("--n_steps", type=int, default=50, help="Number of steps for CFM sampling.")
-    argparser.add_argument("--n_workers", type=int, default=4, help="Number of DataLoader workers.")
-    argparser.add_argument("--feature_extractor", type=str, default="dino", choices=["dino", "inception"],
-                           help="Feature extractor for FID/KID: DINOv2 CLS token (dino) or standard InceptionV3 (inception).")
-    argparser.add_argument("--skip_kid", action="store_true",
-                           help="Only compute FID (skip the complementary KID metric).")
-    argparser.add_argument("--skip_depth_consistency", action="store_true",
-                           help="Skip the depth self-consistency metric (DAv2 on the generated RGB "
-                                "vs the generated depth channel). Off by default; skip it to avoid "
-                                "loading the Depth-Anything-V2 model during eval.")
-    argparser.add_argument("--dav2_variant", type=str, default="Large",
-                           choices=["Small", "Base", "Large"],
-                           help="Depth-Anything-V2 variant for the depth-consistency metric. Default "
-                                "Large to match the training depth targets (see extract_depth.py).")
-    argparser.add_argument("--kid_subset_size", type=int, default=1000,
-                           help="KID MMD subset size per resample; clamped down to the available "
-                                "sample count per comparison so small campaigns don't crash.")
-    argparser.add_argument("--mode", type=str, default="unconditional",
-                           choices=["unconditional", "conditional", "gold", "both", "all"],
-                           help="unconditional: FID vs whole test set; conditional: per-campaign "
-                                "FID (train DINO conditions generation, test images are the reference); "
-                                "gold: real train-vs-test FID floor (global + per-campaign, no generation); "
-                                "both: unconditional+conditional; all: everything.")
-    argparser.add_argument("--per_campaign_size", type=int, default=None,
-                           help="Max real/generated samples per campaign for the conditional, RAE "
-                                "reconstruction and gold per-campaign evals. Default None = the "
-                                "campaign's full test split; pass a small value to limit per-campaign "
-                                "generation for debugging. For a real (non-debug) run keep it well above "
-                                "the feature dim (768 DINO / 2048 inception) or FID is unstable.")
-    argparser.add_argument("--campaigns", type=str, nargs="+", default=None,
-                           help="Space-separated campaigns to evaluate (conditional/gold modes). "
-                                "Default: all campaigns in the test split.")
-    argparser.add_argument("--debug_samples", type=int, default=4,
-                           help="Per campaign (conditional mode), save this many [conditioning source | "
-                                "generated] pairs to figs/cfm/test_generation/<campaign>/. 0 disables (and "
-                                "skips the extra source-RGB read).")
+    argparser.add_argument(
+        "--sample_size",
+        type=int,
+        default=100,
+        help="Global sample cap: max real/generated images for the unconditional "
+        "and gold-global evals (per-campaign uses --per_campaign_size).",
+    )
+    argparser.add_argument(
+        "--batch_size", type=int, default=8, help="Batch size for generation."
+    )
+    argparser.add_argument(
+        "--n_steps", type=int, default=50, help="Number of steps for CFM sampling."
+    )
+    argparser.add_argument(
+        "--n_workers", type=int, default=4, help="Number of DataLoader workers."
+    )
+    argparser.add_argument(
+        "--feature_extractor",
+        type=str,
+        default="dino",
+        choices=["dino", "inception"],
+        help="Feature extractor for FID/KID: DINOv2 CLS token (dino) or standard InceptionV3 (inception).",
+    )
+    argparser.add_argument(
+        "--skip_kid",
+        action="store_true",
+        help="Only compute FID (skip the complementary KID metric).",
+    )
+    argparser.add_argument(
+        "--skip_depth_consistency",
+        action="store_true",
+        help="Skip the depth self-consistency metric (DAv2 on the generated RGB "
+        "vs the generated depth channel). Off by default; skip it to avoid "
+        "loading the Depth-Anything-V2 model during eval.",
+    )
+    argparser.add_argument(
+        "--dav2_variant",
+        type=str,
+        default="Large",
+        choices=["Small", "Base", "Large"],
+        help="Depth-Anything-V2 variant for the depth-consistency metric. Default "
+        "Large to match the training depth targets (see extract_depth.py).",
+    )
+    argparser.add_argument(
+        "--kid_subset_size",
+        type=int,
+        default=1000,
+        help="KID MMD subset size per resample; clamped down to the available "
+        "sample count per comparison so small campaigns don't crash.",
+    )
+    argparser.add_argument(
+        "--mode",
+        type=str,
+        default="unconditional",
+        choices=["unconditional", "conditional", "gold", "both", "all"],
+        help="unconditional: FID vs whole test set; conditional: per-campaign "
+        "FID (train DINO conditions generation, test images are the reference); "
+        "gold: real train-vs-test FID floor (global + per-campaign, no generation); "
+        "both: unconditional+conditional; all: everything.",
+    )
+    argparser.add_argument(
+        "--per_campaign_size",
+        type=int,
+        default=None,
+        help="Max real/generated samples per campaign for the conditional, RAE "
+        "reconstruction and gold per-campaign evals. Default None = the "
+        "campaign's full test split; pass a small value to limit per-campaign "
+        "generation for debugging. For a real (non-debug) run keep it well above "
+        "the feature dim (768 DINO / 2048 inception) or FID is unstable.",
+    )
+    argparser.add_argument(
+        "--campaigns",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Space-separated campaigns to evaluate (conditional/gold modes). "
+        "Default: all campaigns in the test split.",
+    )
+    argparser.add_argument(
+        "--debug_samples",
+        type=int,
+        default=4,
+        help="Per campaign (conditional mode), save this many [conditioning source | "
+        "generated] pairs to figs/cfm/test_generation/<campaign>/. 0 disables (and "
+        "skips the extra source-RGB read).",
+    )
 
     args = argparser.parse_args()
     main(args)

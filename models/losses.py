@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
 # Differentiable augmentation (Zhao et al. 2020)
 # ---------------------------------------------------------------------------
@@ -17,16 +16,20 @@ import torch.nn.functional as F
 # Applied to the discriminator's input only, identically to real and fake. The
 # operations are differentiable so gradients flow into the generator.
 
+
 def _rand_brightness(x: torch.Tensor) -> torch.Tensor:
     return x + (torch.rand(x.size(0), 1, 1, 1, device=x.device) - 0.5)
+
 
 def _rand_saturation(x: torch.Tensor) -> torch.Tensor:
     mean = x.mean(dim=1, keepdim=True)
     return (x - mean) * (torch.rand(x.size(0), 1, 1, 1, device=x.device) * 2) + mean
 
+
 def _rand_contrast(x: torch.Tensor) -> torch.Tensor:
     mean = x.mean(dim=[1, 2, 3], keepdim=True)
     return (x - mean) * (torch.rand(x.size(0), 1, 1, 1, device=x.device) + 0.5) + mean
+
 
 def _rand_translation(x: torch.Tensor, ratio: float = 0.125) -> torch.Tensor:
     B, C, H, W = x.shape
@@ -39,10 +42,14 @@ def _rand_translation(x: torch.Tensor, ratio: float = 0.125) -> torch.Tensor:
     grid_h = torch.clamp(grid_h + th + 1, 0, H + 1)
     grid_w = torch.clamp(grid_w + tw + 1, 0, W + 1)
     x_pad = F.pad(x, [1, 1, 1, 1, 0, 0, 0, 0])
-    out = x_pad.permute(0, 2, 3, 1).contiguous()[
-        grid_b, grid_h, grid_w
-    ].permute(0, 3, 1, 2).contiguous()
+    out = (
+        x_pad.permute(0, 2, 3, 1)
+        .contiguous()[grid_b, grid_h, grid_w]
+        .permute(0, 3, 1, 2)
+        .contiguous()
+    )
     return out
+
 
 def _rand_cutout(x: torch.Tensor, ratio: float = 0.5) -> torch.Tensor:
     B, C, H, W = x.shape
@@ -62,8 +69,9 @@ def _rand_cutout(x: torch.Tensor, ratio: float = 0.5) -> torch.Tensor:
     return x * mask.unsqueeze(1)
 
 
-def diff_augment(x: torch.Tensor, policy: str = "color,translation,cutout"
-                 ) -> torch.Tensor:
+def diff_augment(
+    x: torch.Tensor, policy: str = "color,translation,cutout"
+) -> torch.Tensor:
     """Apply DiffAugment policies in sequence. Inputs in [0, 1]."""
     if not policy:
         return x
@@ -86,12 +94,14 @@ def diff_augment(x: torch.Tensor, policy: str = "color,translation,cutout"
 # LPIPS
 # ---------------------------------------------------------------------------
 
+
 class LPIPSLoss(nn.Module):
     """lpips.LPIPS wrapper. Inputs in [0, 1]; converted to [-1, 1] internally."""
 
     def __init__(self, net: str = "vgg"):
         super().__init__()
         import lpips
+
         self.lpips = lpips.LPIPS(net=net, verbose=False)
         for p in self.lpips.parameters():
             p.requires_grad_(False)
@@ -105,6 +115,7 @@ class LPIPSLoss(nn.Module):
 # DINO-S/8-backed discriminator
 # ---------------------------------------------------------------------------
 
+
 class DinoDiscriminator(nn.Module):
     """Frozen DINO-S/8 backbone with a small trainable convolutional head.
 
@@ -116,7 +127,7 @@ class DinoDiscriminator(nn.Module):
     """
 
     IMAGENET_MEAN = (0.485, 0.456, 0.406)
-    IMAGENET_STD  = (0.229, 0.224, 0.225)
+    IMAGENET_STD = (0.229, 0.224, 0.225)
 
     def __init__(self, head_channels: int = 256):
         super().__init__()
@@ -131,7 +142,7 @@ class DinoDiscriminator(nn.Module):
         # 28x28 token grid. We extract patch tokens (drop CLS), reshape to a
         # [B, 384, 28, 28] feature map, then run the head.
         self.feat_dim = 384
-        self.feat_grid = 224 // 8     # 28
+        self.feat_grid = 224 // 8  # 28
 
         head_dim = head_channels
         self.head = nn.Sequential(
@@ -160,13 +171,13 @@ class DinoDiscriminator(nn.Module):
         """Run frozen DINO and return [B, 384, 28, 28] patch features."""
         # Normalize to ImageNet stats inside the module so callers can pass [0,1]
         x = (x - self.mean) / self.std
-        
-        # FIXED: Removed torch.no_grad() here to allow gradients to flow 
-        # back to the generator. The backbone parameters are already frozen, 
+
+        # FIXED: Removed torch.no_grad() here to allow gradients to flow
+        # back to the generator. The backbone parameters are already frozen,
         # so this is memory safe.
         tokens = self.backbone.get_intermediate_layers(x, n=1)[0]  # [B, 1+N, D]
-        
-        patches = tokens[:, 1:, :]                                     # drop CLS
+
+        patches = tokens[:, 1:, :]  # drop CLS
         B, N, D = patches.shape
         g = self.feat_grid
         return patches.transpose(1, 2).view(B, D, g, g).contiguous()
@@ -184,39 +195,48 @@ Discriminator = DinoDiscriminator
 # Adaptive GAN weight (VQGAN / RAE)
 # ---------------------------------------------------------------------------
 
-def adaptive_lambda(rec_grad: torch.Tensor, gan_grad: torch.Tensor,
-                    eps: float = 1e-4, max_value: float = 1e4) -> torch.Tensor:
-    return torch.clamp(rec_grad.norm() / (gan_grad.norm() + eps),
-                        max=max_value).detach()
+
+def adaptive_lambda(
+    rec_grad: torch.Tensor,
+    gan_grad: torch.Tensor,
+    eps: float = 1e-4,
+    max_value: float = 1e4,
+) -> torch.Tensor:
+    return torch.clamp(
+        rec_grad.norm() / (gan_grad.norm() + eps), max=max_value
+    ).detach()
 
 
 # ---------------------------------------------------------------------------
 # Scale-invariant depth loss (Eigen et al. 2014)
 # ---------------------------------------------------------------------------
 
-def silog_loss(pred: torch.Tensor, target: torch.Tensor,
-               lam: float = 0.85, eps: float = 1e-3) -> torch.Tensor:
+
+def silog_loss(
+    pred: torch.Tensor, target: torch.Tensor, lam: float = 0.85, eps: float = 1e-3
+) -> torch.Tensor:
     """Scale-invariant log loss, computed per-image then averaged.
-g = log(pred) - log(target); loss = mean_b( E[g^2] - lam * E[g]^2 ),
-where the expectations are over each image's pixels. Subtracting the
-per-image mean error makes the loss invariant to a per-image multiplicative
-depth scale, so deployments at different absolute depth scales contribute
-"""
+    g = log(pred) - log(target); loss = mean_b( E[g^2] - lam * E[g]^2 ),
+    where the expectations are over each image's pixels. Subtracting the
+    per-image mean error makes the loss invariant to a per-image multiplicative
+    depth scale, so deployments at different absolute depth scales contribute
+    """
     pred = pred.clamp_min(eps)
     target = target.clamp_min(eps)
-    g = (torch.log(pred) - torch.log(target)).flatten(1)   # (B, H*W)
+    g = (torch.log(pred) - torch.log(target)).flatten(1)  # (B, H*W)
     per_image = g.pow(2).mean(dim=1) - lam * g.mean(dim=1).pow(2)
     return per_image.clamp_min(0).mean()
 
 
-def multiscale_gradient_loss(pred: torch.Tensor, target: torch.Tensor,
-                             num_scales: int = 4, eps: float = 1e-3) -> torch.Tensor:
+def multiscale_gradient_loss(
+    pred: torch.Tensor, target: torch.Tensor, num_scales: int = 4, eps: float = 1e-3
+) -> torch.Tensor:
     """Multi-scale gradient matching (MiDaS-style), in log-depth space.
-Penalises the difference between the spatial gradients of pred and target
-at several resolutions. Because the GT depth here is smooth, this term is
-near-zero for clean output but strongly penalises high-frequency grain in
-the prediction (e.g. texture leaking from the RGB LPIPS/GAN losses through
-"""
+    Penalises the difference between the spatial gradients of pred and target
+    at several resolutions. Because the GT depth here is smooth, this term is
+    near-zero for clean output but strongly penalises high-frequency grain in
+    the prediction (e.g. texture leaking from the RGB LPIPS/GAN losses through
+    """
     diff = torch.log(pred.clamp_min(eps)) - torch.log(target.clamp_min(eps))
     total = diff.new_zeros(())
     for _ in range(num_scales):
@@ -233,6 +253,7 @@ the prediction (e.g. texture leaking from the RGB LPIPS/GAN losses through
 # Combined loss with phase scheduling
 # ---------------------------------------------------------------------------
 
+
 class RAELoss(nn.Module):
     """RGBD reconstruction loss with phase-scheduled LPIPS and GAN.
 
@@ -240,31 +261,33 @@ class RAELoss(nn.Module):
     Discriminator-side: hinge GAN on RGB only, with DiffAugment on inputs.
     """
 
-    def __init__(self,
-                 lpips_start_epoch: int = 6,
-                 gan_start_epoch:   int = 8,
-                 w_l1_rgb:          float = 1.0,
-                 w_depth:           float = 1.0,
-                 w_lpips:           float = 1.0,
-                 w_gan:             float = 0.75,
-                 depth_loss:        str = "silog",
-                 silog_lambda:      float = 0.85,
-                 silog_eps:         float = 1e-3,
-                 w_depth_grad:      float = 0.5,
-                 depth_grad_scales: int = 4,
-                 diffaug_policy:    str = "color,translation,cutout"):
+    def __init__(
+        self,
+        lpips_start_epoch: int = 6,
+        gan_start_epoch: int = 8,
+        w_l1_rgb: float = 1.0,
+        w_depth: float = 1.0,
+        w_lpips: float = 1.0,
+        w_gan: float = 0.75,
+        depth_loss: str = "silog",
+        silog_lambda: float = 0.85,
+        silog_eps: float = 1e-3,
+        w_depth_grad: float = 0.5,
+        depth_grad_scales: int = 4,
+        diffaug_policy: str = "color,translation,cutout",
+    ):
         super().__init__()
         self.lpips_start = lpips_start_epoch
-        self.gan_start   = gan_start_epoch
-        self.w_l1_rgb    = w_l1_rgb
-        self.w_depth     = w_depth
-        self.depth_loss  = depth_loss
+        self.gan_start = gan_start_epoch
+        self.w_l1_rgb = w_l1_rgb
+        self.w_depth = w_depth
+        self.depth_loss = depth_loss
         self.silog_lambda = silog_lambda
-        self.silog_eps   = silog_eps
+        self.silog_eps = silog_eps
         self.w_depth_grad = w_depth_grad
         self.depth_grad_scales = depth_grad_scales
-        self.w_lpips     = w_lpips
-        self.w_gan       = w_gan
+        self.w_lpips = w_lpips
+        self.w_gan = w_gan
         self.diffaug_policy = diffaug_policy
 
         self.lpips = LPIPSLoss(net="vgg")
@@ -283,18 +306,21 @@ class RAELoss(nn.Module):
 
     # ----- generator-side loss -----
 
-    def generator_loss(self,
-                       rgbd_pred:   torch.Tensor,
-                       rgbd_target: torch.Tensor,
-                       last_layer:  nn.Parameter | None = None,
-                       disc:        nn.Module | None    = None) -> dict:
+    def generator_loss(
+        self,
+        rgbd_pred: torch.Tensor,
+        rgbd_target: torch.Tensor,
+        last_layer: nn.Parameter | None = None,
+        disc: nn.Module | None = None,
+    ) -> dict:
         rgb_p, depth_p = rgbd_pred[:, :3], rgbd_pred[:, 3:4]
         rgb_t, depth_t = rgbd_target[:, :3], rgbd_target[:, 3:4]
 
-        l_l1_rgb   = F.l1_loss(rgb_p, rgb_t)
+        l_l1_rgb = F.l1_loss(rgb_p, rgb_t)
         if self.depth_loss == "silog":
-            l_depth = silog_loss(depth_p, depth_t,
-                                 lam=self.silog_lambda, eps=self.silog_eps)
+            l_depth = silog_loss(
+                depth_p, depth_t, lam=self.silog_lambda, eps=self.silog_eps
+            )
             depth_key = "silog_depth"
         else:
             l_depth = F.l1_loss(depth_p, depth_t)
@@ -305,8 +331,8 @@ class RAELoss(nn.Module):
 
         if self.w_depth_grad > 0:
             l_depth_grad = multiscale_gradient_loss(
-                depth_p, depth_t,
-                num_scales=self.depth_grad_scales, eps=self.silog_eps)
+                depth_p, depth_t, num_scales=self.depth_grad_scales, eps=self.silog_eps
+            )
             loss = loss + self.w_depth_grad * l_depth_grad
             out["depth_grad"] = l_depth_grad.detach()
 
@@ -326,16 +352,16 @@ class RAELoss(nn.Module):
                 rec_total = self.w_l1_rgb * l_l1_rgb + (
                     self.w_lpips * l_lp if self.lpips_active else 0.0
                 )
-                rec_grad = torch.autograd.grad(rec_total, last_layer,
-                                               retain_graph=True)[0]
-                gan_grad = torch.autograd.grad(l_g, last_layer,
-                                               retain_graph=True)[0]
+                rec_grad = torch.autograd.grad(
+                    rec_total, last_layer, retain_graph=True
+                )[0]
+                gan_grad = torch.autograd.grad(l_g, last_layer, retain_graph=True)[0]
                 lam = adaptive_lambda(rec_grad, gan_grad)
             else:
                 lam = torch.tensor(1.0, device=rgb_p.device)
 
             loss = loss + self.w_gan * lam * l_g
-            out["gan_g"]      = l_g.detach()
+            out["gan_g"] = l_g.detach()
             out["gan_lambda"] = lam.detach()
 
         out["total"] = loss
@@ -343,10 +369,9 @@ class RAELoss(nn.Module):
 
     # ----- discriminator-side loss -----
 
-    def discriminator_loss(self,
-                           disc:     nn.Module,
-                           rgb_real: torch.Tensor,
-                           rgb_fake: torch.Tensor) -> dict:
+    def discriminator_loss(
+        self, disc: nn.Module, rgb_real: torch.Tensor, rgb_fake: torch.Tensor
+    ) -> dict:
         if not self.gan_active:
             return {"d_total": torch.tensor(0.0, device=rgb_real.device)}
 

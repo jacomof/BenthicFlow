@@ -1,5 +1,4 @@
-"""Patch-level latent visualization for REEF.
-"""
+"""Patch-level latent visualization for REEF."""
 
 import argparse
 import sys
@@ -15,14 +14,14 @@ from benthicflow import FIG_ROOT
 from benthicflow.reef_io import iter_feature_files
 from benthicflow.viz import features_to_rgb, load_pca_rgb
 
-
 # ----------------------------- helpers ------------------------------------
+
 
 def grid_to_rgb_mosaic(grid_features: np.ndarray, pca3, vmin, vmax) -> np.ndarray:
     """Convert a [16, 16, D] patch grid to a [16, 16, 3] RGB mosaic."""
     H, W, D = grid_features.shape
     flat = grid_features.reshape(-1, D).astype(np.float32)
-    rgb = features_to_rgb(flat, pca3, vmin, vmax)        # [256, 3] in [0, 1]
+    rgb = features_to_rgb(flat, pca3, vmin, vmax)  # [256, 3] in [0, 1]
     return rgb.reshape(H, W, 3)
 
 
@@ -36,7 +35,7 @@ def image_to_mean_rgb(grid_features: np.ndarray, pca3, vmin, vmax) -> np.ndarray
 def collect_mean_features(npz_path: Path) -> np.ndarray:
     """Load deployment features and return [N, D] of per-image mean patches."""
     z = np.load(npz_path)
-    feats = z["features"].astype(np.float32)             # [N, 16, 16, D]
+    feats = z["features"].astype(np.float32)  # [N, 16, 16, D]
     return feats.reshape(feats.shape[0], -1, feats.shape[-1]).mean(1)
 
 
@@ -53,11 +52,13 @@ def fit_global_kmeans(n_clusters: int) -> KMeans:
 
 # ----------------------------- per-image patch mosaics --------------------
 
-def plot_patch_mosaics(npz_path: Path, pca3, vmin, vmax, out: Path,
-                       n_samples: int = 24) -> None:
+
+def plot_patch_mosaics(
+    npz_path: Path, pca3, vmin, vmax, out: Path, n_samples: int = 24
+) -> None:
     """Show n_samples random images as patch mosaics."""
     z = np.load(npz_path)
-    feats = z["features"].astype(np.float32)             # [N, 16, 16, D]
+    feats = z["features"].astype(np.float32)  # [N, 16, 16, D]
     n = len(feats)
     if n == 0:
         return
@@ -67,18 +68,19 @@ def plot_patch_mosaics(npz_path: Path, pca3, vmin, vmax, out: Path,
     cols = 8
     rows = (len(idx) + cols - 1) // cols
 
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 1.6, rows * 1.6),
-                             squeeze=False)
+    fig, axes = plt.subplots(
+        rows, cols, figsize=(cols * 1.6, rows * 1.6), squeeze=False
+    )
     for ax, i in zip(axes.ravel(), idx):
         mosaic = grid_to_rgb_mosaic(feats[i], pca3, vmin, vmax)
         ax.imshow(mosaic, interpolation="nearest")
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.set_title(str(z["keys"][i])[:14], fontsize=6)
-    for ax in axes.ravel()[len(idx):]:
+    for ax in axes.ravel()[len(idx) :]:
         ax.axis("off")
 
-    fig.suptitle(f"{npz_path.parent.name} — within-image patch structure",
-                 fontsize=11)
+    fig.suptitle(f"{npz_path.parent.name} — within-image patch structure", fontsize=11)
     plt.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=140, bbox_inches="tight")
@@ -87,35 +89,45 @@ def plot_patch_mosaics(npz_path: Path, pca3, vmin, vmax, out: Path,
 
 # ----------------------------- timeline (sequence) ------------------------
 
-def plot_deployment_timeline(npz_path: Path, pca3, vmin, vmax,
-                             kmeans: KMeans, out: Path) -> None:
+
+def plot_deployment_timeline(
+    npz_path: Path, pca3, vmin, vmax, kmeans: KMeans, out: Path
+) -> None:
     z = np.load(npz_path)
     feats = z["features"].astype(np.float32)
     n = len(feats)
     if n == 0:
         return
 
-    means = feats.reshape(n, -1, feats.shape[-1]).mean(1)        # [N, D]
+    means = feats.reshape(n, -1, feats.shape[-1]).mean(1)  # [N, D]
 
     # Continuous PCA-RGB strip
-    cont_rgb = features_to_rgb(means, pca3, vmin, vmax)           # [N, 3]
+    cont_rgb = features_to_rgb(means, pca3, vmin, vmax)  # [N, 3]
 
     # Categorical K-Means strip
     labels = kmeans.predict(means)
     cmap = plt.get_cmap("tab10")
-    cat_rgb = cmap(labels)[:, :3]                                 # [N, 3]
+    cat_rgb = cmap(labels)[:, :3]  # [N, 3]
 
-    fig, axes = plt.subplots(2, 1, figsize=(14, 4),
-                             gridspec_kw={"height_ratios": [1, 1]})
+    fig, axes = plt.subplots(
+        2, 1, figsize=(14, 4), gridspec_kw={"height_ratios": [1, 1]}
+    )
 
-    axes[0].imshow(cont_rgb[None, :, :], aspect="auto",
-                   extent=[0, n, 0, 1], interpolation="nearest")
-    axes[0].set_yticks([]); axes[0].set_xticks([])
-    axes[0].set_title(f"Continuous PCA-RGB timeline — {npz_path.parent.name} "
-                      f"({n} images)")
+    axes[0].imshow(
+        cont_rgb[None, :, :],
+        aspect="auto",
+        extent=[0, n, 0, 1],
+        interpolation="nearest",
+    )
+    axes[0].set_yticks([])
+    axes[0].set_xticks([])
+    axes[0].set_title(
+        f"Continuous PCA-RGB timeline — {npz_path.parent.name} " f"({n} images)"
+    )
 
-    axes[1].imshow(cat_rgb[None, :, :], aspect="auto",
-                   extent=[0, n, 0, 1], interpolation="nearest")
+    axes[1].imshow(
+        cat_rgb[None, :, :], aspect="auto", extent=[0, n, 0, 1], interpolation="nearest"
+    )
     axes[1].set_yticks([])
     axes[1].set_xlabel("Image sequence index")
     axes[1].set_title(f"K-Means biome labels (K={kmeans.n_clusters})")
@@ -128,28 +140,33 @@ def plot_deployment_timeline(npz_path: Path, pca3, vmin, vmax,
 
 # ----------------------------- campaign overview --------------------------
 
-def plot_campaign_grid(campaign: str, deployment_files: list[Path],
-                       kmeans: KMeans, out: Path) -> None:
+
+def plot_campaign_grid(
+    campaign: str, deployment_files: list[Path], kmeans: KMeans, out: Path
+) -> None:
     """One row per deployment, showing the K-Means biome timeline."""
     n = len(deployment_files)
-    fig, axes = plt.subplots(n, 1, figsize=(14, max(2, n * 1.2)),
-                             squeeze=False)
+    fig, axes = plt.subplots(n, 1, figsize=(14, max(2, n * 1.2)), squeeze=False)
 
     cmap = plt.get_cmap("tab10")
     for ax, fp in zip(axes.ravel(), deployment_files):
         means = collect_mean_features(fp)
         if len(means) == 0:
-            ax.axis("off"); continue
+            ax.axis("off")
+            continue
         labels = kmeans.predict(means)
         cat_rgb = cmap(labels)[:, :3]
-        ax.imshow(cat_rgb[None, :, :], aspect="auto",
-                  extent=[0, len(means), 0, 1], interpolation="nearest")
+        ax.imshow(
+            cat_rgb[None, :, :],
+            aspect="auto",
+            extent=[0, len(means), 0, 1],
+            interpolation="nearest",
+        )
         ax.set_yticks([])
         ax.set_title(fp.parent.name, fontsize=9, loc="left")
         ax.set_xlabel("seq idx", fontsize=7)
 
-    fig.suptitle(f"{campaign} — biome timelines (K={kmeans.n_clusters})",
-                 fontsize=12)
+    fig.suptitle(f"{campaign} — biome timelines (K={kmeans.n_clusters})", fontsize=12)
     plt.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=140, bbox_inches="tight")
@@ -158,10 +175,14 @@ def plot_campaign_grid(campaign: str, deployment_files: list[Path],
 
 # ----------------------------- driver -------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--per-deployment", action="store_true",
-                    help="Also save per-deployment timeline + patch-mosaic figures.")
+    ap.add_argument(
+        "--per-deployment",
+        action="store_true",
+        help="Also save per-deployment timeline + patch-mosaic figures.",
+    )
     ap.add_argument("--clusters", type=int, default=4)
     args = ap.parse_args()
 
@@ -184,10 +205,17 @@ def main() -> None:
     if args.per_deployment:
         for campaign, _deployment, fp in iter_feature_files():
             base = FIG_ROOT / "per_deployment" / campaign / fp.parent.name
-            plot_deployment_timeline(fp, pca3, vmin, vmax, kmeans,
-                                     base.with_name(f"{base.name}_timeline.png"))
-            plot_patch_mosaics(fp, pca3, vmin, vmax,
-                               base.with_name(f"{base.name}_mosaics.png"))
+            plot_deployment_timeline(
+                fp,
+                pca3,
+                vmin,
+                vmax,
+                kmeans,
+                base.with_name(f"{base.name}_timeline.png"),
+            )
+            plot_patch_mosaics(
+                fp, pca3, vmin, vmax, base.with_name(f"{base.name}_mosaics.png")
+            )
         print(f"\nPer-deployment figures in {FIG_ROOT}/per_deployment/")
 
 

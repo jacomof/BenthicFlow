@@ -10,8 +10,8 @@
 
 from typing import Callable, Optional, Tuple, Union
 
-from torch import Tensor
 import torch.nn as nn
+from torch import Tensor
 
 
 def make_2tuple(x):
@@ -25,11 +25,11 @@ def make_2tuple(x):
 
 class PatchEmbed(nn.Module):
     """2D image to patch embedding: (B,C,H,W) -> (B,N,D)
-Args:
-img_size: Image size.
-patch_size: Patch token size.
-in_chans: Number of input image channels.
-"""
+    Args:
+    img_size: Image size.
+    patch_size: Patch token size.
+    in_chans: Number of input image channels.
+    """
 
     def __init__(
         self,
@@ -59,15 +59,21 @@ in_chans: Number of input image channels.
 
         self.flatten_embedding = flatten_embedding
 
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_HW, stride=patch_HW)
+        self.proj = nn.Conv2d(
+            in_chans, embed_dim, kernel_size=patch_HW, stride=patch_HW
+        )
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x: Tensor) -> Tensor:
         _, _, H, W = x.shape
         patch_H, patch_W = self.patch_size
 
-        assert H % patch_H == 0, f"Input image height {H} is not a multiple of patch height {patch_H}"
-        assert W % patch_W == 0, f"Input image width {W} is not a multiple of patch width: {patch_W}"
+        assert (
+            H % patch_H == 0
+        ), f"Input image height {H} is not a multiple of patch height {patch_H}"
+        assert (
+            W % patch_W == 0
+        ), f"Input image width {W} is not a multiple of patch width: {patch_W}"
 
         x = self.proj(x)  # B C H W
         H, W = x.size(2), x.size(3)
@@ -79,7 +85,13 @@ in_chans: Number of input image channels.
 
     def flops(self) -> float:
         Ho, Wo = self.patches_resolution
-        flops = Ho * Wo * self.embed_dim * self.in_chans * (self.patch_size[0] * self.patch_size[1])
+        flops = (
+            Ho
+            * Wo
+            * self.embed_dim
+            * self.in_chans
+            * (self.patch_size[0] * self.patch_size[1])
+        )
         if self.norm is not None:
             flops += Ho * Wo * self.embed_dim
         return flops

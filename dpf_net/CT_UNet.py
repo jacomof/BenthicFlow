@@ -1,11 +1,12 @@
+import itertools
+import math
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import os
-import math
-from timm.models.layers import DropPath
 import torch.optim as optim
-import itertools
+from timm.models.layers import DropPath
 
 
 class DoubleConv(nn.Module):
@@ -18,7 +19,7 @@ class DoubleConv(nn.Module):
             nn.Mish(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
-            #nn.ReLU(inplace=True)
+            # nn.ReLU(inplace=True)
             nn.Mish(),
         )
 
@@ -30,23 +31,25 @@ class Down(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(Down, self).__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
+            nn.MaxPool2d(2), DoubleConv(in_channels, out_channels)
         )
 
     def forward(self, x):
         return self.maxpool_conv(x)
+
 
 class Up(nn.Module):
     def __init__(self, in_channels, out_channels, bilinear=True):
         super(Up, self).__init__()
 
         if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
             self.conv = DoubleConv(in_channels, out_channels // 2)
             self.conv_out = nn.Conv2d(out_channels // 2, out_channels, kernel_size=1)
         else:
-            self.up = nn.ConvTranspose2d(in_channels, out_channels // 2, kernel_size=2, stride=2)
+            self.up = nn.ConvTranspose2d(
+                in_channels, out_channels // 2, kernel_size=2, stride=2
+            )
             self.conv = DoubleConv(out_channels // 2, out_channels)
 
     def forward(self, x1, x2):
@@ -59,7 +62,7 @@ class Up(nn.Module):
 
         x = torch.cat([x2, x1], dim=1)
 
-        if hasattr(self, 'conv_out'):
+        if hasattr(self, "conv_out"):
             x = self.conv_out(self.conv(x))
         else:
             x = self.conv(x)
@@ -75,15 +78,16 @@ class ResBlock(nn.Module):
             body.append(nn.ReflectionPad2d(1))
             body.append(nn.Conv2d(num_filter, num_filter, kernel_size=3, padding=0))
             if i == 0:
-                #body.append(nn.LeakyReLU())
+                # body.append(nn.LeakyReLU())
                 body.append(nn.Mish())
-        #body.append(SELayer(num_filter))
+        # body.append(SELayer(num_filter))
         self.body = nn.Sequential(*body)
 
     def forward(self, x):
         res = self.body(x)
         x = res + x
         return x
+
 
 class InConv(nn.Module):
     def __init__(self, in_ch, out_ch):
@@ -99,6 +103,7 @@ class InConv(nn.Module):
 
     def forward(self, x):
         return self.in_conv(x)
+
 
 class OutConv(nn.Module):
     def __init__(self, in_ch, out_ch):
@@ -117,8 +122,17 @@ class OutConv(nn.Module):
         x = self.out_conv(x)
         return self.sigmoid(x)
 
+
 class XCA(nn.Module):
-    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
+    def __init__(
+        self,
+        dim,
+        num_heads=8,
+        qkv_bias=False,
+        qk_scale=None,
+        attn_drop=0.0,
+        proj_drop=0.0,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
@@ -152,7 +166,8 @@ class XCA(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'temperature'}
+        return {"temperature"}
+
 
 class LayerNorm(nn.Module):
     def __init__(self, normalized_shape, eps=1e-6):
@@ -162,30 +177,55 @@ class LayerNorm(nn.Module):
         self.eps = eps
         self.normalized_shape = (normalized_shape,)
 
-
     def forward(self, x):
         return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
 
+
 class LGFI(nn.Module):
-    def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6, expan_ratio=6,
-                 num_heads=8, qkv_bias=True, attn_drop=0., drop=0.):
+    def __init__(
+        self,
+        dim,
+        drop_path=0.0,
+        layer_scale_init_value=1e-6,
+        expan_ratio=6,
+        num_heads=8,
+        qkv_bias=True,
+        attn_drop=0.0,
+        drop=0.0,
+    ):
         super().__init__()
 
         self.dim = dim
 
         self.norm_xca = LayerNorm(self.dim, eps=1e-6)
 
-        self.gamma_xca = nn.Parameter(layer_scale_init_value * torch.ones(self.dim),
-                                      requires_grad=True) if layer_scale_init_value > 0 else None
-        self.xca = XCA(self.dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
+        self.gamma_xca = (
+            nn.Parameter(
+                layer_scale_init_value * torch.ones(self.dim), requires_grad=True
+            )
+            if layer_scale_init_value > 0
+            else None
+        )
+        self.xca = XCA(
+            self.dim,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+        )
 
         self.norm = LayerNorm(self.dim, eps=1e-6)
         self.pwconv1 = nn.Linear(self.dim, expan_ratio * self.dim)
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(expan_ratio * self.dim, self.dim)
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((self.dim)),
-                                  requires_grad=True) if layer_scale_init_value > 0 else None
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.gamma = (
+            nn.Parameter(
+                layer_scale_init_value * torch.ones((self.dim)), requires_grad=True
+            )
+            if layer_scale_init_value > 0
+            else None
+        )
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x):
         input_ = x
@@ -209,6 +249,7 @@ class LGFI(nn.Module):
 
         return x
 
+
 class CT_UNet(nn.Module):
     def __init__(self, input_nc=3):
         super(CT_UNet, self).__init__()
@@ -223,16 +264,15 @@ class CT_UNet(nn.Module):
 
         self.bridge = ResBlock(256)
 
-        self.up1 = Up(256+128, 128)
-        self.up2 = Up(128+64, 64)
-        self.up3 = Up(64+32, 32)
-        self.up4 = Up(32+16, 16)
+        self.up1 = Up(256 + 128, 128)
+        self.up2 = Up(128 + 64, 64)
+        self.up3 = Up(64 + 32, 32)
+        self.up4 = Up(32 + 16, 16)
 
         self.lgfi1 = LGFI(128)
         self.lgfi2 = LGFI(64)
         self.lgfi3 = LGFI(32)
         self.lgfi4 = LGFI(16)
-
 
     def forward(self, x):
         x1 = self.inc(x)

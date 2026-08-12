@@ -1,16 +1,20 @@
 """Migrate compressed depths.npz to uncompressed .npy for memory mapping."""
 
 from pathlib import Path
+
 import numpy as np
 from tqdm import tqdm
 
 # Updated to match your exact directory structure
 DEPTH_ROOT = Path("depth")
 
+
 def migrate_all() -> None:
     # Matches depth/Campaign/Deployment/depths.npz
     npz_files = list(DEPTH_ROOT.glob("*/*/depths.npz"))
-    print(f"Found {len(npz_files)} depth archives to migrate in {DEPTH_ROOT.resolve()}.")
+    print(
+        f"Found {len(npz_files)} depth archives to migrate in {DEPTH_ROOT.resolve()}."
+    )
 
     for npz_path in tqdm(npz_files):
         try:
@@ -29,6 +33,7 @@ def migrate_all() -> None:
             # npz_path.unlink()
         except Exception as e:
             print(f"Failed on archive {npz_path}: {e}")
+
 
 if __name__ == "__main__":
     migrate_all()
