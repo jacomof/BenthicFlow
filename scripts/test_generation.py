@@ -202,15 +202,11 @@ class _DINOv2CLS(torch.nn.Module):
 @torch.no_grad()
 def dino_patch_embed(model, x):
     """DINOv2 patch tokens for a [B, 3, H, W] float batch in [0,1].
-
-    Mirrors _DINOv2CLS's preprocessing (resize to a multiple of the patch size,
-    ImageNet normalise) but returns the per-patch tokens x_norm_patchtokens
-    ([B, num_patches, embed_dim]) instead of the CLS token. Callers mean-pool
-    these to one [D] vector per image for the content-fidelity cosine similarity
-    between a conditioning source and its generation. Same computation as
-    flux_test_generation.py's dino_patch_embed so the two generators' pooled
-    cosine-similarity numbers are directly comparable.
-    """
+Mirrors _DINOv2CLS's preprocessing (resize to a multiple of the patch size,
+ImageNet normalise) but returns the per-patch tokens x_norm_patchtokens
+([B, num_patches, embed_dim]) instead of the CLS token. Callers mean-pool
+these to one [D] vector per image for the content-fidelity cosine similarity
+"""
     _PATCH = 14
     x = x.float().to(next(model.parameters()).device)
     h, w = x.shape[-2:]
@@ -224,43 +220,11 @@ def dino_patch_embed(model, x):
 
 class DepthConsistency:
     """Self-consistency between the generated depth channel and Depth-Anything-V2's
-    depth estimate on the *generated* RGB image.
-
-    The generator emits an RGB-D sample; a physically coherent sample should have
-    a depth channel that agrees with what a monocular depth estimator would infer
-    from the RGB alone. We run DAv2 (the same variant/output space used to build
-    the training depth targets, see extract_depth.py) on each generated image and
-    score its prediction against the generated depth.
-
-    Both maps are affine-invariant inverse-depth: the generated depth lives in the
-    min-max-normalised DAv2 space (normalize_depth) and DAv2's raw predicted_depth
-    is defined only up to an unknown scale and shift. We therefore least-squares
-    align the prediction to the generated depth per image (solve s, b minimising
-    ||s*pred + b - gen||^2) before scoring -- the standard affine-invariant protocol
-    used by MiDaS/DPT/Depth-Anything. Reported:
-
-      * depth_si_rmse -- affine-invariant RMSE after alignment (lower is better);
-                         the headline depth-estimation error, in normalised units.
-      * depth_pearson -- Pearson correlation between the two maps (in [-1, 1],
-                         higher is better); scale/shift-invariant by construction,
-                         a robust structural-consistency score.
-      * depth_std     -- mean per-image std of the target depth. Needed to read
-                         the other two: for affine alignment SI-RMSE ==
-                         std * sqrt(1 - r^2) per image, so near-flat maps (small
-                         std, typical for nadir seafloor shots whose stored depth
-                         was min-max normalised over the full 518 view before the
-                         224 crop) give a small SI-RMSE even when r is mediocre.
-
-    NB: the score has a protocol ceiling < 1. The depth channel was trained on
-    DAv2 predictions over the full 518x518 view (then cropped), while this metric
-    re-runs DAv2 on the 224 crop alone; monocular depth is context-dependent, so
-    those two predictions differ even for a *real* image. Compare against the
-    real-pair ceiling (this same scorer fed real RGB + stored depth, reported as
-    depth_*_real by the eval loops) rather than against 1.0.
-
-    Accumulated per-image (sum + count) so it can be reset per campaign and pooled
-    across batches, mirroring the dino_pooled_cossim content metric.
-    """
+depth estimate on the *generated* RGB image.
+The generator emits an RGB-D sample; a physically coherent sample should have
+a depth channel that agrees with what a monocular depth estimator would infer
+from the RGB alone. We run DAv2 (the same variant/output space used to build
+"""
 
     def __init__(self, dav2_run, size=TRAIN_SIZE):
         self.run = dav2_run
@@ -342,19 +306,11 @@ class DepthConsistency:
 @torch.no_grad()
 def dav2_fullview_depth_crop(dav2_run, full_rgb_uint8, crop_yx):
     """Recompute the training depth targets on the fly, protocol-matched.
-
-    Reproduces extract_depth.py's target pipeline exactly: DAv2 on the *entire*
-    518x518 view, per-image min-max normalisation over the full view
-    (normalize_depth, i.e. normalise-before-crop as in training), then the same
-    crop the dataloader applied to this sample (crop_yx from
-    CSVSplitDataset(return_full_rgb=True)). The result lives in the same space
-    -- same FOV, same normalisation -- as the stored targets and hence as the
-    depth channel the RAE/CFM decode, making comparisons apples-to-apples.
-
-    full_rgb_uint8: [B, 518, 518, 3] uint8 CPU tensor (the uncropped views).
-    crop_yx:        [B, 2] int tensor of (y0, x0) offsets per sample.
-    Returns [B, TRAIN_SIZE, TRAIN_SIZE] float CPU tensor.
-    """
+Reproduces extract_depth.py's target pipeline exactly: DAv2 on the *entire*
+518x518 view, per-image min-max normalisation over the full view
+(normalize_depth, i.e. normalise-before-crop as in training), then the same
+crop the dataloader applied to this sample (crop_yx from
+"""
     pil = [Image.fromarray(img.numpy()) for img in full_rgb_uint8]
     preds = dav2_run(pil)  # list of HxW float32 arrays (raw predicted_depth)
     out = []
@@ -382,17 +338,11 @@ def generate_batch_conditionally(cfm_model, rae_model, cond, n_steps):
 
 class GenerationMetrics:
     """FID + (optionally) KID sharing a single feature extractor.
-
-    Both torchmetrics metrics take the same `feature` argument (an int for the
-    stock InceptionV3, or an nn.Module for a custom extractor), so we build them
-    from the same extractor and drive them through one reset/update/compute API.
-    This keeps the eval loops metric-agnostic: they update once and get both
-    scores back. Feature extraction runs once per metric per batch, but the CFM
-    sampling dominates runtime, so the extra InceptionV3/DINOv2 pass is cheap.
-
-    KID needs `subset_size <= min(#real, #fake)` or `.compute()` raises; keep
-    `kid_subset_size` well below the smallest per-campaign sample count.
-    """
+Both torchmetrics metrics take the same `feature` argument (an int for the
+stock InceptionV3, or an nn.Module for a custom extractor), so we build them
+from the same extractor and drive them through one reset/update/compute API.
+This keeps the eval loops metric-agnostic: they update once and get both
+"""
 
     def __init__(self, feature, extractor_label, normalize, with_kid=True, kid_subset_size=50):
         self.extractor_label = extractor_label
@@ -546,20 +496,11 @@ def build_metrics(args):
 
 def evaluate_unconditional(model, rae, metrics, args, depth_consistency=None):
     """FID/KID between unconditional CFM samples and a matched sample of the test split.
-
-    Both the real reference and the generated set are capped at --sample_size
-    (the same global cap gold uses), so this no longer scans the whole test split;
-    a matched batch of samples is generated for each real batch until the budget
-    is hit.
-
-    When `depth_consistency` is provided, each generated batch's depth channel is
-    also scored against DAv2's depth estimate on the generated RGB (see
-    DepthConsistency). The same scorer is additionally fed each *real* batch with
-    its stored depth target (depth_*_real keys): that pair has no generative
-    error, so it measures the metric's protocol ceiling (DAv2 on the 224 crop vs
-    a target derived from DAv2 on the full 518 view). Read the generated scores
-    against the _real ceiling, not against 1.0.
-    """
+Both the real reference and the generated set are capped at --sample_size
+(the same global cap gold uses), so this no longer scans the whole test split;
+a matched batch of samples is generated for each real batch until the budget
+is hit.
+"""
     metrics.reset()
     real_depth_consistency = None
     if depth_consistency is not None:
@@ -694,43 +635,11 @@ def select_campaigns(args):
 
 def evaluate_conditional_per_campaign(model, rae, metrics, args, depth_consistency=None):
     """Per-campaign conditional FID/KID, plus the folded-in RAE-reconstruction floor.
-
-    For each campaign: condition generation on that campaign's *train* DINO
-    features and compare the generated images against that campaign's *test*
-    images. A high per-campaign FID relative to the unconditional FID signals
-    the model is not honouring the campaign conditioning.
-
-    The RAE-reconstruction eval is folded into the same loop to avoid a second
-    disk pass over the campaign's RGB/depth/DINO: the conditioning-source batch
-    (rgb_src, depth, dino) already read for generation is *also* encoded and
-    decoded straight through the frozen RAE (no flow matching; rae(dino, depth)
-    returns the reconstruction, noise_tau=0 so it is deterministic). Because the
-    CFM decodes RGB-D through this same RAE, the round-trip is the achievable
-    ceiling the generator inherits. It is scored into a *separate* FID/KID bundle
-    (real = source images, fake = reconstructions) with its own dino_pooled_mse and
-    depth-consistency accumulators; the source's pooled-DINO embedding and the DAv2
-    estimator are shared with the conditional path so neither is recomputed.
-
-    When `depth_consistency` is provided, three depth comparisons run per campaign:
-      * conditional dict, depth_*      -- CFM-generated depth vs DAv2 on the
-        generated 224 image (self-consistency; a generated sample has no full
-        view, so this is inherently crop-FOV). Read against depth_*_real, the
-        real-pair ceiling under the same crop-FOV protocol, not against 1.0.
-      * rae dict, depth_*              -- RAE recon depth vs the protocol-matched
-        reference: DAv2 recomputed on the full 518 source view, normalised over
-        the full view, then this sample's exact dataloader crop
-        (dav2_fullview_depth_crop). Same FOV + normalisation as the training
-        targets, so this one *is* readable against ~1.0.
-      * rae dict, depth_*_ref_check    -- recomputed reference vs the stored depth
-        crop from disk; pure extraction-pipeline sanity check, expect r ~= 1.
-
-    --per_campaign_size caps the real reference and the generated/reconstructed set
-    per campaign; None (the default) uses the campaign's full test split. Pass a
-    small value to limit conditional generation for debugging.
-
-    Returns (conditional_results, rae_reconstruction_results), each a
-    {campaign: score_dict} mapping.
-    """
+For each campaign: condition generation on that campaign's *train* DINO
+features and compare the generated images against that campaign's *test*
+images. A high per-campaign FID relative to the unconditional FID signals
+the model is not honouring the campaign conditioning.
+"""
     campaigns = select_campaigns(args)
     cap_str = "full split" if args.per_campaign_size is None else f"<= {args.per_campaign_size}"
     print(f"\nConditional + RAE-reconstruction per-campaign FID/KID over {len(campaigns)} "
@@ -920,16 +829,11 @@ def _update_from_loader(loader, metrics, real, size, desc):
 
 def evaluate_gold_standard(metrics, args):
     """FID/KID between real *train* and real *test* images -- the achievable floor.
-
-    No generation is involved: this measures the train/test distribution gap
-    (plus finite-sample bias) itself, so any generative FID above it reflects
-    model error rather than dataset shift. Reported globally and per campaign so
-    it sits directly beside the unconditional and conditional numbers.
-
-    Note: train crops are random and test crops are centered (per split), so a
-    small part of this gap is crop-policy mismatch -- consistent with how train
-    images condition/seed the generators in the other modes.
-    """
+No generation is involved: this measures the train/test distribution gap
+(plus finite-sample bias) itself, so any generative FID above it reflects
+model error rather than dataset shift. Reported globally and per campaign so
+it sits directly beside the unconditional and conditional numbers.
+"""
     def _loader(split, campaign=None):
         ds = CSVSplitDataset(split=split, load_rgb=True, campaign=campaign)
         # shuffle=True here (unlike the other modes): gold caps at sample_size /

@@ -1,47 +1,6 @@
-# scripts/lift_panorama_surfels.py
-"""Lift a generated 2.5D (RGB-D) seabed panorama into a publication-quality
-Gaussian splat using surface-aligned flat surfels.
+"""Lift 2D panoramas into 3D surfel point clouds and meshes.
 
-WHY SURFELS (the fix for blur + holes):
-  A round, isotropic Gaussian per pixel is the wrong primitive for a 2.5D
-  surface. Circular footprints cannot tile a slanted surface (-> holes the moment
-  the camera is not perfectly fronto-parallel), and each ball is a sphere poking
-  out of the surface (-> smear from any oblique view). The standard remedy
-  (2DGS / SuGaR / surfel splatting) is to make each splat a flat disk that hugs
-  the surface. Here, from a depth map this is exact and free:
-
-    * normal  : from the local depth gradient (cross of the two pixel-tangents),
-    * orient  : a per-pixel rotation R = [t1 | t2 | n] (columns), so the disk's
-                two fat axes span the tangent plane and the thin axis is the normal,
-    * size    : per-axis = k * (local inter-pixel spacing), measured with a
-                ONE-SIDED MINIMUM so a surfel never stretches across a depth edge;
-                anisotropic, so slanted patches get appropriately elongated disks
-                and tile WITHOUT holes (validated: 60 deg slant -> 0.74 coverage),
-    * thin    : normal axis = thin_ratio * in-plane size -> flat, stays crisp,
-    * opaque  : opacity ~1 -> nearest surfel wins, no alpha bleed -> sharp.
-
-  No geometric optimisation is needed: we already have the reference RGB and
-  depth, so the splat positions/orientations are a deterministic
-  re-parameterisation of the 2.5D data, not something to fit. For publication
-  quality we optionally run a short *anchored appearance refinement*: optimise DC
-  colours, opacity, and only bounded in-plane scale residuals, while keeping
-  positions, rotations, and normal thickness fixed. A second optional
-  colour-only perceptual polish can then optimise only DC colours using LPIPS or
-  VGG feature loss, leaving geometry, opacity, and scale frozen. This recovers
-  front-view fidelity/perceptual quality without letting the Gaussians grow into
-  blurry volumetric blobs. No spherical harmonics: appearance is single-view.
-
-OUTPUTS (under FIG_ROOT/<run>/surfels/):
-  surfels.ply       3DGS-format splat -> open in SuperSplat / GaussianSplats3D and
-                    frame the hero shot interactively (recommended for the figure).
-  panel.png         reference RGB | front-view render | tilted render
-                    (front view ~= pixel-perfect, proving fidelity; tilt shows relief)
-  angles.png        contact sheet of 6 tilt/azimuth options to pick from
-  beauty.png        the single tilted beauty render, RGBA (transparent background)
-  metrics.json      front-view fidelity vs the reference (PSNR/SSIM/L1) + counts
-
-Reuses the working pieces from lift_panorama_3d.py (generation, gsplat wrapper,
-PLY writer) verbatim; only the primitive construction and rendering changed.
+Unprojects generated RGB-D panoramas into 3D point clouds and exports PLY models.
 """
 
 import sys
@@ -88,16 +47,11 @@ def ease(a, gamma=1.0):
 
 def fractal_cond_jitter(ny, nx, dim, levels=3, seed=None):
     """Value-noise fBm on the window lattice: per level, a small Gaussian grid
-    (all `dim` channels at once) is bilinearly upsampled to (ny, nx) and summed
-    with halving amplitude -- the cheap equivalent of diamond-square midpoint
-    jitter (Infinite-Leagues-style), without its lattice artifacts.
-
-    Levels start at the FIRST midpoint grid (3x3 -> 5x5 -> 9x9 with amplitudes
-    1, 1/2, 1/4): a 2x2 level would itself be a bilinear field, redundant with
-    the base corner interpolation (it only re-tilts the global gradient, which
-    is visually invisible next to it) -- and in diamond-square proper, corners
-    are fixed and noise enters at the midpoints. Returns [ny, nx, dim] (CPU,
-    unnormalised -- the caller rescales to a target offset norm)."""
+(all `dim` channels at once) is bilinearly upsampled to (ny, nx) and summed
+with halving amplitude -- the cheap equivalent of diamond-square midpoint
+jitter (Infinite-Leagues-style), without its lattice artifacts.
+Levels start at the FIRST midpoint grid (3x3 -> 5x5 -> 9x9 with amplitudes
+"""
     gen = torch.Generator().manual_seed(seed) if seed is not None else None
     field = torch.zeros(ny, nx, dim)
     for k in range(levels):
@@ -388,15 +342,11 @@ def _grad_l1(a, b):
 def refine_surfels_source_view(g, target_rgb, focal, bg, rasterize_mode,
                                steps=500, log_every=100):
     """Constrained front-view fit.
-
-    Fixed: positions, rotations, normal thickness.
-    Optimised: DC colour, opacity, bounded in-plane scale residuals.
-
-    The only public hyperparameter is `steps`; the rest are deliberately fixed so
-    this behaves like a renderer calibration stage rather than a new method with a
-    dozen tunables. The bounds prevent the optimisation from solving fidelity by
-    inflating splats into blurry volumetric blobs.
-    """
+Fixed: positions, rotations, normal thickness.
+Optimised: DC colour, opacity, bounded in-plane scale residuals.
+The only public hyperparameter is `steps`; the rest are deliberately fixed so
+this behaves like a renderer calibration stage rather than a new method with a
+"""
     if steps <= 0:
         return g
 
@@ -557,14 +507,11 @@ def _make_perceptual_loss(device):
 def refine_surfels_color_perceptual(g, target_rgb, focal, bg, rasterize_mode,
                                     steps=200, log_every=50):
     """Final colour-only source-view polish.
-
-    Fixed: positions, rotations, opacity, all scales including normal thickness.
-    Optimised: DC colours only.
-
-    This is the safest place to use LPIPS/VGG: it can improve texture and
-    perceptual sharpness, but it cannot change coverage or bloat splats because
-    geometry/opacity/scale are completely frozen.
-    """
+Fixed: positions, rotations, opacity, all scales including normal thickness.
+Optimised: DC colours only.
+This is the safest place to use LPIPS/VGG: it can improve texture and
+perceptual sharpness, but it cannot change coverage or bloat splats because
+"""
     if steps <= 0:
         return g, {"perceptual_backend": "disabled"}
 

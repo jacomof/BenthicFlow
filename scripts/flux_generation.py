@@ -55,16 +55,11 @@ def preprocess_and_resize(image_path, target_width=1024, target_height=1024):
 
 def build_pipeline(model="klein"):
     """Build the pipeline for `model` ("klein", "dev", or "flux1-dev").
-
-    klein:     Flux2KleinPipeline (Qwen3 text encoder), bf16 weights.
-    dev:       Flux2Pipeline (Mistral3 text encoder). The transformer and the
-               large (~24B) Mistral3 text encoder are loaded in 4-bit NF4
-               (bitsandbytes) so the pair fits on one GPU; the VAE stays bf16.
-    flux1-dev: FluxImg2ImgPipeline (the older FLUX.1-dev img2img baseline), bf16.
-
-    All variants use enable_model_cpu_offload(), so only the active component is
-    resident on the GPU at a time.
-    """
+klein:     Flux2KleinPipeline (Qwen3 text encoder), bf16 weights.
+dev:       Flux2Pipeline (Mistral3 text encoder). The transformer and the
+large (~24B) Mistral3 text encoder are loaded in 4-bit NF4
+(bitsandbytes) so the pair fits on one GPU; the VAE stays bf16.
+"""
     if model == "klein":
         print("Loading FLUX.2 klein image pipeline (bf16)...")
         # Load the transformer on CPU first, then let accelerate stream layers to

@@ -10,12 +10,9 @@ _os.environ["REEF_VARIANT"] = "dpf"
 # scripts/test_panorama.py
 """Evaluate generated images with the Fréchet Inception Distance (FID) and
 Kernel Inception Distance (KID) metrics.
-
 Both metrics compare the distributions of real and generated images through a
 feature extractor (InceptionV3 or DINOv2 CLS tokens). FID fits Gaussians to the
 features and is biased at small sample sizes; KID is an unbiased MMD estimate
-that comes with a standard deviation, so it complements FID when the number of
-samples per comparison is small (e.g. per-campaign). Lower is better for both.
 """
 
 import sys
@@ -223,15 +220,11 @@ class _DINOv2CLS(torch.nn.Module):
 @torch.no_grad()
 def dino_patch_embed(model, x):
     """DINOv2 patch tokens for a [B, 3, H, W] float batch in [0,1].
-
-    Mirrors _DINOv2CLS's preprocessing (resize to a multiple of the patch size,
-    ImageNet normalise) but returns the per-patch tokens x_norm_patchtokens
-    ([B, num_patches, embed_dim]) instead of the CLS token. Callers mean-pool
-    these to one [D] vector per image for the content-fidelity cosine similarity
-    between a conditioning source and its generation. Same computation as
-    flux_test_generation.py's dino_patch_embed so the two generators' pooled
-    cosine-similarity numbers are directly comparable.
-    """
+Mirrors _DINOv2CLS's preprocessing (resize to a multiple of the patch size,
+ImageNet normalise) but returns the per-patch tokens x_norm_patchtokens
+([B, num_patches, embed_dim]) instead of the CLS token. Callers mean-pool
+these to one [D] vector per image for the content-fidelity cosine similarity
+"""
     _PATCH = 14
     x = x.float().to(next(model.parameters()).device)
     h, w = x.shape[-2:]
@@ -245,34 +238,11 @@ def dino_patch_embed(model, x):
 
 class DepthConsistency:
     """Depth fidelity of the frozen RAE round-trip (no flow matching): the RAE-decoded
-    depth channel vs the *input* depth the RAE was given (the stored DPEM target x_d,
-    cropped exactly as the dataloader served it).
-
-    Both maps live in the same stored x_d space, so this needs no DPEM re-run and no
-    raw RGB -- it directly measures how faithfully the autoencoder reproduces the depth
-    modality. (Depth self-consistency via DPEM-on-RGB is *not* applicable to generated
-    images: they have no raw RGB, and DPEM's per-image metric scale is sign-unstable on
-    the CLAHE-normalised RGB -- max_depth<min_depth flips x_d for a large fraction of
-    images -- so re-running DPEM as a reference is unreliable. Hence depth consistency
-    is measured only here, on the RAE encode-decode.)
-
-    Reported:
-
-      * depth_rmse    -- raw RMSE between recon and input (no alignment, in x_d units);
-                         the direct "did the RAE reproduce the depth" error.
-      * depth_si_rmse -- affine-invariant RMSE after a per-image least-squares
-                         alignment (solve s, b minimising ||s*recon + b - input||^2);
-                         forgives a global scale/shift, isolating structural error.
-      * depth_pearson -- Pearson correlation of the two maps (in [-1, 1], higher is
-                         better); scale/shift-invariant structural fidelity. A well-
-                         trained RAE should score near 1 (same space, no re-estimation).
-      * depth_std     -- mean per-image std of the input depth. Reads the SI numbers:
-                         SI-RMSE == std * sqrt(1 - r^2) per image, so near-flat maps
-                         give a small SI-RMSE even when r is mediocre.
-
-    Accumulated per-image (sum + count) so it can be reset per campaign and pooled
-    across batches, mirroring the dino_pooled_cossim content metric.
-    """
+depth channel vs the *input* depth the RAE was given (the stored DPEM target x_d,
+cropped exactly as the dataloader served it).
+Both maps live in the same stored x_d space, so this needs no DPEM re-run and no
+raw RGB -- it directly measures how faithfully the autoencoder reproduces the depth
+"""
 
     def __init__(self):
         self.reset()
@@ -355,17 +325,11 @@ def generate_batch_conditionally(cfm_model, rae_model, cond, n_steps):
 
 class GenerationMetrics:
     """FID + (optionally) KID sharing a single feature extractor.
-
-    Both torchmetrics metrics take the same `feature` argument (an int for the
-    stock InceptionV3, or an nn.Module for a custom extractor), so we build them
-    from the same extractor and drive them through one reset/update/compute API.
-    This keeps the eval loops metric-agnostic: they update once and get both
-    scores back. Feature extraction runs once per metric per batch, but the CFM
-    sampling dominates runtime, so the extra InceptionV3/DINOv2 pass is cheap.
-
-    KID needs `subset_size <= min(#real, #fake)` or `.compute()` raises; keep
-    `kid_subset_size` well below the smallest per-campaign sample count.
-    """
+Both torchmetrics metrics take the same `feature` argument (an int for the
+stock InceptionV3, or an nn.Module for a custom extractor), so we build them
+from the same extractor and drive them through one reset/update/compute API.
+This keeps the eval loops metric-agnostic: they update once and get both
+"""
 
     def __init__(self, feature, extractor_label, normalize, with_kid=True, kid_subset_size=50):
         self.extractor_label = extractor_label
@@ -516,16 +480,11 @@ def build_metrics(args):
 
 def evaluate_unconditional(model, rae, metrics, args):
     """FID/KID between unconditional CFM samples and a matched sample of the test split.
-
-    Both the real reference and the generated set are capped at --sample_size
-    (the same global cap gold uses), so this no longer scans the whole test split;
-    a matched batch of samples is generated for each real batch until the budget
-    is hit.
-
-    No depth-consistency metric here: generated images have no raw RGB to run DPEM
-    on, and DPEM on the CLAHE-normalised RGB is sign-unstable. Depth consistency is
-    measured only on the RAE round-trip (see evaluate_conditional_per_campaign).
-    """
+Both the real reference and the generated set are capped at --sample_size
+(the same global cap gold uses), so this no longer scans the whole test split;
+a matched batch of samples is generated for each real batch until the budget
+is hit.
+"""
     metrics.reset()
     test_dataset = CSVSplitDataset(split="test", load_rgb=True)
     # shuffle=True: we cap at sample_size and break early, so the subset must be
@@ -651,35 +610,11 @@ def select_campaigns(args):
 
 def evaluate_conditional_per_campaign(model, rae, metrics, args, compute_depth=False):
     """Per-campaign conditional FID/KID, plus the folded-in RAE-reconstruction floor.
-
-    For each campaign: condition generation on that campaign's *train* DINO
-    features and compare the generated images against that campaign's *test*
-    images. A high per-campaign FID relative to the unconditional FID signals
-    the model is not honouring the campaign conditioning.
-
-    The RAE-reconstruction eval is folded into the same loop to avoid a second
-    disk pass over the campaign's RGB/depth/DINO: the conditioning-source batch
-    (rgb_src, depth, dino) already read for generation is *also* encoded and
-    decoded straight through the frozen RAE (no flow matching; rae(dino, depth)
-    returns the reconstruction, noise_tau=0 so it is deterministic). Because the
-    CFM decodes RGB-D through this same RAE, the round-trip is the achievable
-    ceiling the generator inherits. It is scored into a *separate* FID/KID bundle
-    (real = source images, fake = reconstructions) with its own dino_pooled_mse;
-    the source's pooled-DINO embedding is shared with the conditional path.
-
-    When `compute_depth` is set, the *only* depth-consistency measured is on the RAE
-    round-trip (rae dict, depth_*): the RAE-decoded depth channel vs the input depth
-    it reconstructs -- both in the stored x_d space, so no DPEM and no raw RGB (see
-    DepthConsistency). Generated images get no depth score (no raw RGB; DPEM on the
-    normalised RGB is sign-unstable).
-
-    --per_campaign_size caps the real reference and the generated/reconstructed set
-    per campaign; None (the default) uses the campaign's full test split. Pass a
-    small value to limit conditional generation for debugging.
-
-    Returns (conditional_results, rae_reconstruction_results), each a
-    {campaign: score_dict} mapping.
-    """
+For each campaign: condition generation on that campaign's *train* DINO
+features and compare the generated images against that campaign's *test*
+images. A high per-campaign FID relative to the unconditional FID signals
+the model is not honouring the campaign conditioning.
+"""
     campaigns = select_campaigns(args)
     cap_str = "full split" if args.per_campaign_size is None else f"<= {args.per_campaign_size}"
     print(f"\nConditional + RAE-reconstruction per-campaign FID/KID over {len(campaigns)} "
@@ -829,16 +764,11 @@ def _update_from_loader(loader, metrics, real, size, desc):
 
 def evaluate_gold_standard(metrics, args):
     """FID/KID between real *train* and real *test* images -- the achievable floor.
-
-    No generation is involved: this measures the train/test distribution gap
-    (plus finite-sample bias) itself, so any generative FID above it reflects
-    model error rather than dataset shift. Reported globally and per campaign so
-    it sits directly beside the unconditional and conditional numbers.
-
-    Note: train crops are random and test crops are centered (per split), so a
-    small part of this gap is crop-policy mismatch -- consistent with how train
-    images condition/seed the generators in the other modes.
-    """
+No generation is involved: this measures the train/test distribution gap
+(plus finite-sample bias) itself, so any generative FID above it reflects
+model error rather than dataset shift. Reported globally and per campaign so
+it sits directly beside the unconditional and conditional numbers.
+"""
     def _loader(split, campaign=None):
         ds = CSVSplitDataset(split=split, load_rgb=True, campaign=campaign)
         # shuffle=True here (unlike the other modes): gold caps at sample_size /

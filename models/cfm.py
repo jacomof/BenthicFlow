@@ -1,37 +1,7 @@
 """Conditional Flow Matching over RAE fused latents.
 
-A DiT-style transformer that predicts the rectified-flow velocity field
-v = z_1 - z_0 for generating 16x16 fused RAE latents (DINOv2-B 768 +
-depth encoder 256 = 1024 channels per token).
-
-The model is mask-conditioned with **noised conditioning** (RePaint-
-style consistency between training and inference):
-
-  - z_t = (1-t) * z_0 + t * z_1                  (the noisy target)
-  - z_known_t = (1-t) * eps' + t * z_1           (the noised condition)
-
-The model sees [z_t, M * z_known_t, M] per token. At known tokens (M=1),
-the condition is noised to the SAME level as z_t, so the model cannot
-algebraically recover the velocity by reading off z_1 — it has to
-denoise. This removes a shortcut the model would otherwise exploit
-during partial-mask training, which empirically causes mode collapse
-when the same model is asked to generate unconditionally (M=0).
-
-At inference, cfm_sample / cfm_sample_tiled use the same noised
-conditioning, so the model sees train-distribution inputs at every
-step. Final correction at t=1 pins the known tokens to the clean
-z_known so seeded panoramas exactly preserve the seed.
-
-Three inference modes share one trained model:
-  1. Unconditional generation    (M = 0 everywhere).
-  2. Inpainting / outpainting    (M marks the known region).
-  3. MultiDiffusion panorama     (cfm_sample_tiled).
-
-References:
-  - Rectified Flow / CFM: Lipman et al. 2023, Liu et al. 2023
-  - DiT (adaLN-Zero):     Peebles & Xie 2023
-  - MultiDiffusion:       Bar-Tal et al. 2023
-  - RePaint:              Lugmayr et al. 2022 (adapted to flow)
+Predicts rectified-flow velocity field v = z_1 - z_0 for generating 16x16 fused
+RAE latents with mask conditioning.
 """
 
 from __future__ import annotations
@@ -290,19 +260,11 @@ def cfm_sample(model: MaskedCFM,
                n_steps: int = 50,
                anchor_known: bool = True) -> torch.Tensor:
     """Generate a latent by Euler integration of the velocity field.
-
-    Inputs in model's normalized space; caller denormalizes the return.
-
-    z_known_norm: [B, N, D]   clean tokens (used only where mask=1)
-    mask:         [B, N, 1]   1 = condition this token to z_known_norm
-
-    At every step we noise z_known_norm to the current t and pass that
-    noised version as the model's condition (matches training), and
-    optionally hard-anchor the known regions of z to that same noised
-    target (RePaint-style consistency).
-
-    Final step pins known tokens to clean z_known_norm at t=1.
-    """
+Inputs in model's normalized space; caller denormalizes the return.
+z_known_norm: [B, N, D]   clean tokens (used only where mask=1)
+mask:         [B, N, 1]   1 = condition this token to z_known_norm
+At every step we noise z_known_norm to the current t and pass that
+"""
     device = z_known_norm.device
     B, N, D = z_known_norm.shape
     z = torch.randn(B, N, D, device=device)
@@ -339,18 +301,11 @@ def cfm_sample_tiled(model: MaskedCFM,
                      n_steps: int = 50,
                      anchor_known: bool = True) -> torch.Tensor:
     """MultiDiffusion sampler over an arbitrarily large canvas.
-
-    canvas_known_norm: [1, H, W, D]   normalized known content
-    canvas_mask:       [1, H, W, 1]   1 where condition is provided
-
-    At every Euler step we (a) noise the canvas's known content to t,
-    (b) optionally anchor z's known tokens to that noised target, and
-    (c) slide a tile-sized window with the given stride over the
-    canvas. The model is run on each window with its slice of the
-    noised conditioning, and overlapping tokens get the average
-    velocity prediction across all tiles containing them — the
-    MultiDiffusion closed form for binary/uniform crop operators.
-    """
+canvas_known_norm: [1, H, W, D]   normalized known content
+canvas_mask:       [1, H, W, 1]   1 where condition is provided
+At every Euler step we (a) noise the canvas's known content to t,
+(b) optionally anchor z's known tokens to that noised target, and
+"""
     assert canvas_known_norm.shape[0] == 1, "tiled sampler is single-canvas"
     device = canvas_known_norm.device
     _, H, W, D = canvas_known_norm.shape

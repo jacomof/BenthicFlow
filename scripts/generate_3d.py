@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """Generate a colored point cloud from an RGB image and a depth map.
-
 This is a minimal RGBD -> point cloud utility intended to provide XYZ + RGB
 for 3DGS or downstream reconstruction.
-
 Examples:
-	python generate_3d.py --rgb img.jpg --depth depth.png --out out.ply
-	python generate_3d.py --campaign MyCampaign --deployment MyDeployment \
-		--key 0000123 --out out.ply
+python generate_3d.py --rgb img.jpg --depth depth.png --out out.ply
 """
 
 from __future__ import annotations

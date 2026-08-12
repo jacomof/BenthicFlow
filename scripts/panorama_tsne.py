@@ -1,15 +1,9 @@
 # scripts/panorama_tsne.py
 """Embedding-space trajectory of condition-interpolated panoramas (paper figure).
-
 Generates N panoramas, each interpolating between a random Hawaii seed (left)
 and a random Batemans seed (right) exactly as in test_panorama.py, but with a
 canvas sized so the generation windows *are* the analysis windows: 4 abutting
 windows of 16 latent columns (stride 16, no overlap) -> latent canvas W = 64.
-Window centers sit at interpolation weights alpha = 0.125/0.375/0.625/0.875; the
-two seeds provide the alpha = 0 and alpha = 1 endpoints. No overlap means the
-window embeddings share no pixels (independent points), at the cost of the
-MultiDiffusion blend being inactive (tiles integrate independently; only the
-fully-convolutional decoder smooths across tile boundaries).
 """
 
 import argparse
@@ -75,15 +69,11 @@ def sample_conditioning(campaign, rng, device, deployment=None,
                         anchor=None, sim_thr=0.85,
                         white_thr=0.9, black_thr=0.1, min_std=0.03, max_tries=200):
     """test_panorama.sample_conditioning, plus a `deployment` pin and an
-    `anchor` similarity gate.
-
-    If `anchor` (a pooled [1,768] cond from a previous call) is given, a
-    candidate is only accepted when the cosine similarity of its pooled DINO
-    embedding to the anchor is >= sim_thr. Anchoring every panorama's seed to
-    the first one drawn keeps each end of the interpolation a single tight
-    cluster, instead of a mixture over the campaign's sites/depths.
-    Returns (rgb_chw in [0,1], cond [1,768], "deployment[idx]").
-    """
+`anchor` similarity gate.
+If `anchor` (a pooled [1,768] cond from a previous call) is given, a
+candidate is only accepted when the cosine similarity of its pooled DINO
+embedding to the anchor is >= sim_thr. Anchoring every panorama's seed to
+"""
     deployments = sorted(p.stem for p in (RGB_SRC / campaign).glob("*.npy"))
     if not deployments:
         raise FileNotFoundError(f"No RGB arrays under {RGB_SRC / campaign}")

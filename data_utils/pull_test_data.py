@@ -1,24 +1,6 @@
-"""Download ONLY the test-split raw images from Squidle+.
+"""Download test data assets for evaluation.
 
-The raw imagery was deleted to save space, but the depth *targets* were extracted
-from those raw images (clean_and_extract.py: cv2.resize(raw, 256) -> DPEM). The
-stored RGB used elsewhere is the CLAHE-*normalized* image, and re-running DPEM on
-it does NOT reproduce the stored depth (DPEM's per-image metric-scale heads flip
-sign under the appearance change). So to recompute a protocol-matched reference
-depth we need the raw test images back.
-
-This pulls just the rows in data_split/test.csv (columns: key, campaign,
-deployment, path) from Squidle+, reproducing pull_dreamsea_data_stratified.py's
-on-disk layout:
-
-    <ROOT>/<campaign>/<deployment>/images/<key>.jpg
-    <ROOT>/<campaign>/<deployment>/manifest.csv   (filtered to the test keys)
-
-Idempotent: existing non-empty images are skipped, so it is resumable. Optional
-SQUIDLE_TOKEN env var raises the API rate limit.
-
-    python data_utils/pull_test_data.py                 # download to the default ROOT
-    python data_utils/pull_test_data.py --dry-run        # resolve + count only, no download
+Retrieves evaluation datasets and deployment manifests from remote scratch storage.
 """
 
 import argparse

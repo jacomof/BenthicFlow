@@ -1,40 +1,6 @@
-# scripts/lift_panorama_hero.py
-"""HEADLINE-FIGURE driver for the surfel-lifted seabed panorama.
+"""Lift hero panoramas into 3D point clouds and meshes.
 
-Builds on lift_panorama_surfels.py (all working pieces imported verbatim) and
-adds exactly what the paper figure needs:
-
-  1. FOUR-CORNER CONDITIONING. One seed per corner (TL, TR, BL, BR), each from
-     a DIFFERENT campaign, bilinearly blended across the canvas by
-     generate_canvas. Pass e.g.:
-       --campaigns Hawaii201801 Batemans201211 Batemans201011 ScottReef201108
-     (order = TL TR BL BR).
-
-  2. PROVENANCE. Every corner seed image is saved individually
-     (corner_TL_<campaign>.png, ...), plus provenance.png (the panorama with
-     the four labelled seeds inset at their corners) and provenance.json
-     (campaigns, corner assignment, seed shapes, RNG seed). Seeds are also
-     stored inside the RGB-D cache blob so --load-rgbd keeps provenance.
-
-  3. MAX FIDELITY DEFAULTS. Denser sliding-window overlap (stride 4), full ODE
-     budget (1000 steps), antialiased rasterisation, 3x supersampling,
-     1600 px display renders, 800-step anchored appearance refinement +
-     300-step colour-only perceptual polish, fixed RNG seed. Fidelity metrics
-     are computed BEFORE and AFTER refinement so the paper can report the gain.
-
-  4. EXHAUSTIVE REPORTING under --out:
-       surfels.ply                    interactive hero framing (SuperSplat)
-       rgb.png / depth.png / normals.png   the raw 2.5D inputs to the lift
-       panel.png                     reference | front render | tilted render
-       provenance.png                corners-in-context headline candidate
-       angles.png                    3 tilts x 4 azimuths contact sheet
-       angles/beauty_tXX_aYY.png     every contact-sheet angle as RGBA
-                                     (with --save-all-angles)
-       beauty.png                    chosen hero angle, RGBA transparent bg
-       error_map.png                 |front render - reference| heatmap
-       coverage_map.png              front-view alpha (where seams leak)
-       metrics.json                  everything numeric, pre/post refinement
-       config.json                   the exact invocation, reproducible
+Generates and exports 3D scene visualizations for designated hero benchmark scenes.
 """
 
 import re

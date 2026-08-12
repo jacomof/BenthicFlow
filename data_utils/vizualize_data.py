@@ -1,11 +1,8 @@
-"""
-Sanity-check the pulled Squidle+ data:
-  1. Tabulate images per campaign / deployment
-  2. Plot AUV trajectories (lat/lon, colored by depth)
-  3. Show altitude distribution (should be ~2m for Sirius)
-  4. Spot-check a few thumbnails per campaign
-
-Run after pull_dreamsea_data.py.
+"""Sanity-check the pulled Squidle+ data:
+1. Tabulate images per campaign / deployment
+2. Plot AUV trajectories (lat/lon, colored by depth)
+3. Show altitude distribution (should be ~2m for Sirius)
+4. Spot-check a few thumbnails per campaign
 """
 
 import glob, random

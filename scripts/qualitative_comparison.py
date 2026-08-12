@@ -1,79 +1,7 @@
-# scripts/qualitative_comparison.py
-"""Qualitative comparison: Original / FLUX.2-dev / BenthicFlow / BenthicFlow-DPF.
+"""Qualitative comparison across Reference, FLUX.2-dev, BenthicFlow, and BenthicFlow-DPF.
 
-5 rows x 6 columns. Three hand-picked conditioning images (1 per site:
-Batemans, Hawaii, Scott Reef), each shown as an [image, depth] column pair --
-there is no second *photo* per site anymore; the second column is always that
-row's own depth estimate, turbo-colored. A horizontal rule separates the
-reef-domain rows from the DPF (enhanced-domain) section:
-
-  row 1  "Reference": the raw uncropped photo, plus Depth-Anything-V2-Large's
-         estimate on that same photo (extract_depth.py's non-metric variant,
-         per-image min-max normalized to [0, 1] -- "reverse" depth, closer =
-         higher value -- computed full-aspect/no center-crop, unlike the
-         cached training-target pipeline, to match this row's own uncropped
-         image);
-  row 2  FLUX.2-dev (4-bit NF4), reference-conditioned on the full uncropped
-         frame with the shared REEF_PROMPT -- FLUX has no depth output, so its
-         depth cell is left empty;
-  row 3  BenthicFlow (reef CFM, unet_cfm_final), conditioned on the pooled
-         DINO of the reference (518 native pipeline, as in training), sampled
-         at a NEAR-NATIVE 16x21 latent (224x294 px: training height, aspect-
-         matched width) and only upsampled at assembly -- like the DPF row.
-         Sampling at the 518-class 37x49 canvas (~7x the 16x16 training area)
-         made the fully-convolutional UNet/decoder tile repetitive texture;
-         depth is the RAE decoder's own 4th channel (sigmoid head,
-         models/rae.py) -- normalized *reverse* depth in [0, 1], the same
-         convention as row 1;
-  ------ separator: everything below lives in the DPF-enhanced domain ------
-  row 4  "Reference (DPF-Net Enhanced)": the DPF-enhanced counterpart of the
-         same image (DATA_NORM_DPF, 256 px) -- the conditioning input of row 5
-         -- plus DPF-Net's own stored depth *target* (DPEM's x_d, from
-         clean_and_extract.py): unnormalized **metric** depth (softplus head,
-         not sigmoid -- see models/rae.py's variant-driven depth head), with
-         no shared scale
-         across images, so it's colored per-image (that image's own min/max);
-  row 5  BenthicFlow-DPF (CFM trained on DPF-enhanced imagery), generated
-         in-process by --stage dpf (the DPF pipeline lives in this repo since
-         the unification -- no more separate-repo subprocess), conditioned on
-         the pooled DINO of row 4 (266 native pipeline, as in training) and
-         sampled at its NATIVE 19x19 latent (266 px) -- rows 4-5
-         are only upsampled at assembly, since generating at the 518-class
-         canvas made the content look zoomed-out vs the training domain. Its
-         depth is that same model's own 4th channel: the same unnormalized
-         metric convention as row 4, also colored per-image.
-
-The two depth conventions are NOT interchangeable: reef's CFM (rows 1, 3)
-outputs normalized *reverse* depth in [0, 1] (closer = higher; fixed vmin=0,
-vmax=1, turbo -> red = close), while DPF-Net (rows 4, 5) outputs unnormalized
-metric *distance* (closer = LOWER) with an arbitrary per-image scale (vmin/
-vmax taken from that image alone). To keep the color language consistent
-across the figure -- red = close everywhere -- the DPF rows are rendered with
-the REVERSED turbo colormap. The DPF-domain maps also look intrinsically much
-smoother than row 1's: x_d comes from DAv2-vits at 256 px inside DPEM (vs
-DAv2-Large at full resolution for row 1), and row 5 is decoded from a 19x19
-latent -- that blobbiness is in the data, not a plotting artifact. Finally,
-DPEM's metric depth is known to be sign-unstable per-image (independent min/
-max heads with nothing enforcing max > min), so a single DPF-domain panel
-that still reads inverted relative to its neighbors is a known model quirk,
-not a plotting bug.
-
-All generations keep the original's aspect ratio, no cropping. Both CFM rows
-sample at (or just beyond) their native training scale and are upsampled only
-for display: sampling far beyond the training canvas is where conv models
-degrade into repetitive texture, so the figure shows each model at the scale
-it was trained for. FLUX generates at 512 x (aspect-matched multiple of 16),
-its own native scale.
-
-Stages (separate processes; each caches its row as PNGs/NPYs so any stage can
-be re-run alone, and assembly is CPU-only):
-
-  --stage cfm       BenthicFlow row + Reference depth (GPU)
-                     -> rows/cfm_{i}.png, rows/cfm_{i}_depth.npy, rows/ref_{i}_depth.npy
-  --stage dpf       BenthicFlow-DPF row (GPU)
-                     -> rows/dpf_{i}.png, rows/dpf_{i}_depth.npy
-  --stage flux      FLUX.2-dev row (GPU)          -> rows/flux_{i}.png
-  --stage assemble  figure from cached rows (CPU) -> qualitative_comparison.pdf/.png
+Generates comparison figures comparing raw RGB-D imagery against FLUX baselines,
+base BenthicFlow, and DPF-enhanced BenthicFlow models.
 """
 
 import argparse
@@ -263,14 +191,11 @@ def stage_cfm(args, device):
 
 def stage_dpf(args, device):
     """BenthicFlow-DPF row (in-process since the DPF-Net unification; formerly
-    a separate-repo subprocess): conditioned on the pooled DINO of the
-    DPF-enhanced counterpart (Resize(266) + CenterCrop(266), exactly the
-    features-dpf extraction pipeline) and sampled at the DPF-NATIVE 19x19
-    latent (266 px decoded, the training-domain scale of the 256 px enhanced
-    imagery); assembly upsamples the row for display. Sampling at the reef
-    518-class canvas instead made the content look zoomed-out relative to the
-    training crops. Also caches the decoder's own 4th channel (unnormalized
-    metric depth) for this row's depth panel."""
+a separate-repo subprocess): conditioned on the pooled DINO of the
+DPF-enhanced counterpart (Resize(266) + CenterCrop(266), exactly the
+features-dpf extraction pipeline) and sampled at the DPF-NATIVE 19x19
+latent (266 px decoded, the training-domain scale of the 256 px enhanced
+"""
     from models.unet_cfm import UNetCFM, cfm_sample_cfg
     from scripts.train_cfm_cfg import load_rae_frozen
     from scripts.extract_features import load_dinov2

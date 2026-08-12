@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-"""
-Lift a single RGB image into a 2.5D point cloud / Gaussian surfel splat.
-
+"""Lift a single RGB image into a 2.5D point cloud / Gaussian surfel splat.
 Pipeline:
-  RGB image
-    -> Depth Anything relative disparity
-    -> robust normalize disparity to [0,1]
-    -> invert to depth01 = 1 - disparity01
-    -> unproject RGBD into a point cloud
-    -> build surface-aligned flat Gaussian surfels
-    -> save pointcloud.ply, surfels.ply, depth maps, front/tilted renders, panel
-
+RGB image
 This is intended for method-overview figures, not metric reconstruction.
 """
 
@@ -63,15 +54,12 @@ def estimate_depth_anything(
     device: str,
     invert: bool = True,
 ):
-    """
-    Depth Anything output is treated as relative disparity / inverse depth.
-
-    We first normalize the raw prediction to disparity01 in [0,1].
-    Then, by default, invert it:
-        depth01 = 1 - disparity01
-
-    So larger depth01 means farther away in the later unprojection.
-    """
+    """Depth Anything output is treated as relative disparity / inverse depth.
+We first normalize the raw prediction to disparity01 in [0,1].
+Then, by default, invert it:
+depth01 = 1 - disparity01
+So larger depth01 means farther away in the later unprojection.
+"""
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
     processor = AutoImageProcessor.from_pretrained(model_id)

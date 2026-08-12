@@ -1,25 +1,9 @@
 # scripts/find_colorful_refs.py
 """Rank reference images by colourfulness and report the top-K.
-
 Scans the precomputed 518x518 RGB arrays (SCRATCH_ROOT/rgb) for the requested
 campaigns and scores every frame with the Hasler-Suesstrunk colourfulness
 metric (Hasler & Suesstrunk, "Measuring colourfulness in natural images",
 SPIE 2003): with opponent channels rg = R-G and yb = (R+G)/2 - B,
-
-    M = sqrt(std(rg)^2 + std(yb)^2) + 0.3 * sqrt(mean(rg)^2 + mean(yb)^2)
-
-i.e. chroma spread plus a bonus for a strongly coloured cast. Dark, murky
-frames score low automatically (low chroma), so no exposure gating is needed.
-
-Outputs under FIG_ROOT/colorful_refs/:
-  <tag>_top<K>.csv      rank, score, brightness, campaign, deployment, index,
-                        filename, and the full data_normalized path (paste
-                        straight into --seeds / IMAGES lists)
-  <tag>_top<K>.png      contact sheet of the winners, rank + score labelled
-
-CPU-only; frames are read via mmap. A full scan is I/O bound (~0.8 MB/frame),
-so use --frame-stride for a quick pass (e.g. 10 -> scan every 10th frame) or
-run the full pass in a CPU job.
 """
 
 import argparse

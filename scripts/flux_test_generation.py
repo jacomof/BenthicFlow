@@ -1,32 +1,6 @@
-# scripts/flux_test_generation.py
-"""Evaluate FLUX.2-dev (4-bit) reef variations against the real test distribution.
+"""Evaluate FLUX text-to-image and img2img generative quality.
 
-Baseline for the CFM generator (see test_generation.py). Uses the 4-bit NF4
-quantized FLUX.2-dev pipeline (Flux2Pipeline + Mistral3 text encoder) kept
-resident on each GPU (no CPU offload) and generating at --gen_size (512 by
-default) for speed. Two evaluation modes, both scored on the test split only:
-
-  * conditional (reference-conditioned): per campaign, take that campaign's test
-    crops as reference images, condition FLUX.2 on each one at a time -- FLUX.2
-    treats a list of images as multiple references for a *single* target and
-    replicates them across the batch, so distinct seeds cannot be batched -- and
-    compute FID + KID against that same campaign's test images, plus a pooled-DINO
-    cosine similarity between each reference and its generation. Mirrors
-    test_generation.py's conditional per-campaign metric so the two generators are
-    directly comparable. (FLUX.2 has no img2img `strength` knob; --strength is
-    ignored.)
-
-  * unconditional (text-to-image): run FLUX.2 prompt-only (no reference image),
-    batched in one call, and score --n_samples generations against a same-sized
-    random sample of the whole test split (all campaigns). Only FID + KID are
-    reported there, since there is no reference<->generation pairing for the DINO
-    content metric.
-
---mode both runs the unconditional and conditional evals back to back over one
-resident FLUX.2-dev pipeline.
-
-Results are written to reef/figs/flux/flux_eval_results.json, keyed by run
-config; re-running merges into the existing file instead of overwriting it.
+Computes FID, KID, and depth consistency for FLUX baseline models.
 """
 
 import sys
@@ -224,14 +198,11 @@ def pil_list_to_tensor(pil_images, size: int, device) -> torch.Tensor:
 
 def flux_generate(pipe, rgb_seed, args):
     """Reference-condition FLUX.2 on each full-frame seed; return [B, 3, eval_size, eval_size].
-
-    FLUX.2 treats a list of images as multiple references for ONE generation and
-    replicates them across the batch, so distinct seeds can't be batched -- we
-    generate one image per seed, each using its own full-frame image as the single
-    reference. Generation runs at args.gen_size (FLUX's comfortable resolution),
-    then outputs are resized down to args.eval_size so the generated and real
-    distributions are scored at the same (lower) resolution.
-    """
+FLUX.2 treats a list of images as multiple references for ONE generation and
+replicates them across the batch, so distinct seeds can't be batched -- we
+generate one image per seed, each using its own full-frame image as the single
+reference. Generation runs at args.gen_size (FLUX's comfortable resolution),
+"""
     gen_images = []
     for img in rgb_seed:
         ref = resize_to_multiple_of_16(tensor_to_pil(img), args.gen_size, args.gen_size)
@@ -352,14 +323,11 @@ def save_flux_uncond_debug(tag, gen_rgb, n_samples):
 
 def select_campaigns(args):
     """Campaigns to evaluate: those passed via --campaigns, else all in the test split.
-
-    Returned as a *sorted* list so every rank iterates campaigns in the identical
-    order. This is critical under data parallelism: evaluate_pair runs collective
-    ops (all_reduce, fid/kid.compute) once per campaign, so if two ranks walked
-    the campaigns in different orders they would desync and NCCL would time out.
-    `available_campaigns` is a set, whose iteration order differs per process
-    under hash randomization -- never iterate it directly across ranks.
-    """
+Returned as a *sorted* list so every rank iterates campaigns in the identical
+order. This is critical under data parallelism: evaluate_pair runs collective
+ops (all_reduce, fid/kid.compute) once per campaign, so if two ranks walked
+the campaigns in different orders they would desync and NCCL would time out.
+"""
     available = CSVSplitDataset(split="test", load_rgb=False).available_campaigns
     rprint(f"\nFound {len(available)} campaigns in the test split.")
     rprint(f"Available campaigns: {sorted(available)}")
@@ -374,18 +342,11 @@ def select_campaigns(args):
 def evaluate_pair(pipe, fid, kid, dino_patch_model, real_loader, seed_loader, args, tag,
                   debug_samples=0, max_per_rank=None):
     """FID/KID for one (real reference, generation seed) loader pair.
-
-    real_loader supplies the real reference images; seed_loader supplies the
-    generation seeds/references. Metrics are reset first so this is reusable
-    across campaigns. When debug_samples > 0, the first generated batch is saved
-    as a [seed | generated] grid under figs/flux/test_generation/<tag>/.
-
-    max_per_rank caps how many real and generated images each rank processes (the
-    per-campaign budget split across ranks); None means no cap. The generation
-    loop trims the seed batch *before* calling the model, so the cap directly
-    bounds the (expensive) number of FLUX generations. Returns a JSON-friendly
-    dict of scores + sample counts.
-    """
+real_loader supplies the real reference images; seed_loader supplies the
+generation seeds/references. Metrics are reset first so this is reusable
+across campaigns. When debug_samples > 0, the first generated batch is saved
+as a [seed | generated] grid under figs/flux/test_generation/<tag>/.
+"""
     fid.reset()
     kid.reset()
 
@@ -504,14 +465,11 @@ def evaluate_pair(pipe, fid, kid, dino_patch_model, real_loader, seed_loader, ar
 
 def evaluate_unconditional(pipe, fid, kid, real_loader, args, tag, debug_samples=0):
     """FID/KID for prompt-only (text-to-image) FLUX generation vs the real test set.
-
-    There is no img2img seed and no per-sample pairing, so only FID/KID are
-    reported (the DINO pooled-MSE, which needs a seed<->generation pair, is
-    omitted). Both the real reference set and the generated set are capped at
-    args.n_samples total, split evenly across ranks under data parallelism.
-    real_loader should draw from the whole test split (campaign=None, shuffled)
-    so the capped real subset represents every campaign.
-    """
+There is no img2img seed and no per-sample pairing, so only FID/KID are
+reported (the DINO pooled-MSE, which needs a seed<->generation pair, is
+omitted). Both the real reference set and the generated set are capped at
+args.n_samples total, split evenly across ranks under data parallelism.
+"""
     fid.reset()
     kid.reset()
 
@@ -590,16 +548,11 @@ def evaluate_unconditional(pipe, fid, kid, real_loader, args, tag, debug_samples
 
 def loader_for(split, campaign, args, shuffle=False):
     """Build a dataset + loader, sharded across ranks under data parallelism.
-
-    Each rank sees a disjoint ~1/WORLD_SIZE slice (DistributedSampler); the union
-    is the full split, and FID/KID recombine the shards in .compute(). shuffle
-    defaults off so per-rank reads stay sequential (cheap once data is on
-    node-local disk) and order is irrelevant to FID/KID; the unconditional mode
-    passes shuffle=True so its capped n_samples subset is drawn evenly from all
-    campaigns rather than just the first few in CSV order. DistributedSampler
-    pads the last shard by duplicating a few samples -- negligible for thousands
-    of images.
-    """
+Each rank sees a disjoint ~1/WORLD_SIZE slice (DistributedSampler); the union
+is the full split, and FID/KID recombine the shards in .compute(). shuffle
+defaults off so per-rank reads stay sequential (cheap once data is on
+node-local disk) and order is irrelevant to FID/KID; the unconditional mode
+"""
     ds = CSVSplitDataset(split=split, load_rgb=True, campaign=campaign)
     if WORLD_SIZE > 1:
         sampler = DistributedSampler(ds, num_replicas=WORLD_SIZE, rank=RANK,
@@ -637,15 +590,11 @@ def update_results_json(path, run_key, config, sections):
 
 def build_flux2_pipeline(local_rank):
     """Load the 4-bit NF4 FLUX.2-dev pipeline, resident on this rank's GPU.
-
-    The transformer and the ~24B Mistral3 text encoder are quantized to 4-bit
-    (bitsandbytes) so the pair fits with room to spare on an 80 GB H100; the VAE
-    stays bf16. 4-bit params can't be .to()-moved, so each quantized component is
-    placed on the rank's GPU at load via device_map, and only the (movable) bf16
-    VAE is sent over afterwards. We deliberately skip enable_model_cpu_offload():
-    keeping everything resident avoids the per-call CPU<->GPU streaming that would
-    otherwise dominate a long eval loop.
-    """
+The transformer and the ~24B Mistral3 text encoder are quantized to 4-bit
+(bitsandbytes) so the pair fits with room to spare on an 80 GB H100; the VAE
+stays bf16. 4-bit params can't be .to()-moved, so each quantized component is
+placed on the rank's GPU at load via device_map, and only the (movable) bf16
+"""
     bnb_diffusers = DiffusersBitsAndBytesConfig(
         load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
     bnb_transformers = TransformersBitsAndBytesConfig(

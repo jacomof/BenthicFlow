@@ -1,30 +1,7 @@
-"""Representation Autoencoder (RAE) for RGBD underwater imagery.
+"""Representation Autoencoder (RAE) for RGB-D underwater imagery.
 
-Architecture (concat-fusion, DINOv2-B, small depth encoder, conv decoder):
-
-  RGB image (3 ch)            Depth map (1 ch)
-       |                            |
-       v                            v
-  frozen DINOv2-B            trainable depth ViT
-  [H, W, 768]                [H, W, 256]
-       \\                          /
-        +--- concat along channel --+
-                  |
-                  v
-        fused latent [H, W, 1024]
-                  |
-                  v   (optional noise injection during training)
-        z + n,  n ~ N(0, sigma^2),  sigma ~ |N(0, tau^2)|
-                  |
-                  v
-        trainable conv decoder (SD-VAE style)
-                  |
-                  v
-            RGBD output (4 ch, 14H x 14W)
-
-Both the depth encoder and the decoder are now resolution-agnostic: the same
-weights handle 224x224 (H=W=16), 448x448 (H=W=32), and non-square inputs, as
-long as the spatial dimensions are multiples of the DINOv2 patch size (14).
+Fuses frozen DINOv2-B features (768d) with trainable depth ViT features (256d)
+into a 1024d latent, reconstructed via a resolution-agnostic ConvDecoder.
 """
 
 from __future__ import annotations
@@ -256,16 +233,11 @@ class _UpsampleConv(nn.Module):
 @dataclass
 class ConvDecoderConfig:
     """Fully-convolutional decoder.
-
-    Input  : fused latent [B, H, W, in_dim] (channel-last, matches existing API).
-    Output : RGBD image   [B, out_channels, sH, sW]  where  s = prod(upsample_factors).
-
-    For DINOv2-B (patch 14), the default (2, 7) -> s=14, which inverts the
-    encoder's patchification exactly.
-
-    Invariant: len(hidden_dims) == len(upsample_factors) + 1
-    (one channel width per resolution stage, from latent res to full res).
-    """
+Input  : fused latent [B, H, W, in_dim] (channel-last, matches existing API).
+Output : RGBD image   [B, out_channels, sH, sW]  where  s = prod(upsample_factors).
+For DINOv2-B (patch 14), the default (2, 7) -> s=14, which inverts the
+encoder's patchification exactly.
+"""
     in_dim:            int = 768 + 256
     hidden_dims:       Tuple[int, ...] = (512, 256, 128)
     upsample_factors:  Tuple[int, ...] = (2, 7)

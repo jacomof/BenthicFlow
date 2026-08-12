@@ -1,17 +1,9 @@
 # scripts/test_panorama.py
 """Panorama generation with the (unmasked) global-conditioned UNetCFM.
-
 MultiDiffusion-style flow matching: a wide latent canvas is integrated with
 overlapping 16x16 windows. Each window is conditioned on a linear interpolation
 of two seed conditions (a Hawaii image on the left, a Batemans image on the
 right), so the panorama transitions from one seabed type to the other. Window
-velocities are blended in the overlaps and the whole latent is decoded once
-(the RAE ConvDecoder is fully convolutional -> size-agnostic, no pos-embed
-patching needed).
-
-Seeds are real images sampled from each campaign; over/under-exposed (near-white
-or near-black) or flat frames are rejected and resampled, and both seeds are
-plotted next to the panorama so you can see what conditioned it.
 """
 
 import sys

@@ -1,17 +1,8 @@
 """Train the RAE for RGBD underwater imagery with Grid-Snapped Cropping.
-
 Pipeline per step:
-  1. Load (rgb, depth, dino_features) perfectly aligned batch from disk via CSV.
-  2. Apply per-token LayerNorm to offline DINO features.
-  3. RAE forward: depth encoder + concat fusion + noise injection + conv decoder.
-  4. Generator loss: L1 + L1_depth [+ LPIPS] [+ GAN].
-  5. (When GAN active) discriminator step on RGB only.
-
-Usage (Single GPU):
-    python scripts/train_rae.py
-
-Usage (Multi-GPU via DDP):
-    torchrun --standalone --nproc_per_node=4 scripts/train_rae.py --batch 16
+1. Load (rgb, depth, dino_features) perfectly aligned batch from disk via CSV.
+2. Apply per-token LayerNorm to offline DINO features.
+3. RAE forward: depth encoder + concat fusion + noise injection + conv decoder.
 """
 from __future__ import annotations
 # DPF-Net (BenthicFlow-DPF) variant of scripts/train_rae_ddp.py.
@@ -364,21 +355,9 @@ def run_evaluation(rae: RAE, loss_fn: RAELoss, dataloader,
 def generate_test_report(metrics: dict, out_path: Path):
     report = f"""# Representation Autoencoder (RAE) - Test Split Report
 *Generated on {time.strftime("%Y-%m-%d %H:%M:%S")}*
-
 ### Core Reconstruction Metrics
 | Metric | Value |
 | :--- | :--- |
-| **RGB L1 Loss** | {metrics['l1_rgb']:.5f} |
-| **Depth L1 Loss** | {metrics['l1_depth']:.5f} |
-| **Depth SILog Loss** | {metrics['silog_depth']:.5f} |
-| **Depth Gradient Loss** | {metrics['depth_grad']:.5f} |
-| **RGB LPIPS** | {metrics['lpips']:.5f} |
-
-### Latent Space Stability
-| Property | Value | Target |
-| :--- | :--- | :--- |
-| **Fused Mean** | {metrics['fused_mean']:.5f} | ~0.0 |
-| **Fused Std Dev** | {metrics['fused_std']:.5f} | ~1.0 |
 """
     print("\n" + "="*50)
     print("FINAL TEST EVALUATION REPORT")

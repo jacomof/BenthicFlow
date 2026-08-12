@@ -1,45 +1,6 @@
-# scripts/flux_knn_campaign_classifier.py
-"""Campaign classification with a k-NN over pooled DINOv2 embeddings -- FLUX.2 variant.
+"""k-NN campaign classification for FLUX generations.
 
-The FLUX.2 counterpart of knn_campaign_classifier.py (the CFM version): same
-protocol, same metric, same test split -- only the generator changes. Two
-classifiers are trained and evaluated on the *same* real test split, so the only
-thing that differs is where the training embeddings come from:
-
-  * real      -- k-NN fit on pooled DINO embeddings of real *train* images.
-  * generated -- k-NN fit on pooled DINO embeddings of images FLUX.2-dev
-                 *generates* when reference-conditioned on each train image.
-                 Each generated sample inherits the campaign label of its
-                 reference image.
-
-Comparing the two accuracies answers: do the FLUX.2 reference-conditioned images
-carry the same campaign-discriminative content as the real images they were
-conditioned on? If the generated-trained k-NN classifies the real test split
-about as well as the real-trained one, FLUX honours the campaign it was shown.
-
-CFM vs FLUX conditioning
-------------------------
-The CFM is conditioned on a [768] pooled-DINO *vector* and decodes a 224 image.
-FLUX.2-dev instead takes the *reference image itself* (image=[seed]), generated
-at --gen_size (512 by default) then resized to --eval_size (224) for scoring --
-exactly as flux_test_generation.py conditions and scores it, and using the same
-full-frame (uncropped) reference the FLUX eval found works best. So here the
-"conditioning" is the train image's RGB, and all three embedding sets (real
-train, generated train, real test) are pooled from DINOv2 at --eval_size, which
-is the common footing that keeps the comparison fair.
-
-Distributed
------------
-FLUX generation is the bottleneck (one image per reference, no batching of
-distinct references), so -- like flux_test_generation.py -- the embedding passes
-are data-parallel: each rank processes a disjoint stride of the dataset and the
-per-rank embeddings are all-gathered before the (cheap) k-NN fit / predict /
-report, which run on rank 0. Launch with torchrun for multi-GPU; it also runs
-single-process unchanged.
-
-Feature protocol (shared by every embedding here): DINOv2 patch tokens on the
---eval_size image, mean-pooled over the grid to one [768] vector (the same
-pooled DINO used elsewhere in the repo).
+Evaluates campaign identity preservation using k-NN classification on extracted features.
 """
 
 import sys
@@ -124,15 +85,11 @@ def campaign_to_class(campaign: str) -> str:
 
 class LabeledFluxDataset(Dataset):
     """Wrap a (per-campaign or full) FLUX CSVSplitDataset to also emit a class label.
-
-    ftg.CSVSplitDataset yields (rgb, dino) full-frame with no label; FLUX conditions
-    on the RGB image directly (not on the DINO grid the CFM used), so the grid is
-    dropped here. We recover the campaign from its record table, collapse it to its
-    site via campaign_to_class, and map that through class_to_idx (a site -> index
-    map). `indices` optionally restricts to a subset (used to cap each campaign at N
-    train images). Returns (rgb, label): rgb is both the real-image embedding source
-    and the FLUX reference image.
-    """
+ftg.CSVSplitDataset yields (rgb, dino) full-frame with no label; FLUX conditions
+on the RGB image directly (not on the DINO grid the CFM used), so the grid is
+dropped here. We recover the campaign from its record table, collapse it to its
+site via campaign_to_class, and map that through class_to_idx (a site -> index
+"""
 
     def __init__(self, base: "ftg.CSVSplitDataset", class_to_idx: dict[str, int],
                  indices: list[int] | None = None):
@@ -153,18 +110,11 @@ class LabeledFluxDataset(Dataset):
 def build_train_dataset(campaigns: list[str], class_to_idx: dict[str, int],
                         n_per_class: int, seed: int) -> ConcatDataset:
     """Class-balanced train set: n_per_class images per class, concatenated.
-
-    Each class's quota is split as evenly as possible across its campaigns, so a
-    multi-campaign site (ScottReef, Batemans) still spans all its deployments but
-    contributes the *same* total as a single-campaign site (Hawaii). A balanced
-    bank matters because the k-NN majority-votes over neighbours -- unequal class
-    counts would bias the vote toward the larger classes.
-
-    A random (seeded) subset is taken per campaign rather than the first N: CSV
-    order groups by deployment, so the first N would be a single deployment
-    instead of a representative sample. The seed is shared across ranks, so every
-    rank builds the identical dataset (a prerequisite for the strided sharding).
-    """
+Each class's quota is split as evenly as possible across its campaigns, so a
+multi-campaign site (ScottReef, Batemans) still spans all its deployments but
+contributes the *same* total as a single-campaign site (Hawaii). A balanced
+bank matters because the k-NN majority-votes over neighbours -- unequal class
+"""
     rng = np.random.default_rng(seed)
     class_campaigns: dict[str, list[str]] = {}
     for c in campaigns:
@@ -196,16 +146,11 @@ def build_test_dataset(test_base: "ftg.CSVSplitDataset", class_to_idx: dict[str,
                        per_campaign: int | None, max_total: int | None,
                        seed: int) -> LabeledFluxDataset:
     """The full test split, with optional debug caps (applied in this order):
-
-      per_campaign -- keep at most this many random test images *per campaign*.
-        A balanced subset that keeps every class represented -- better for a quick
-        debug pass than a raw total cap, whose random draw can starve the small
-        campaigns (Hawaii is ~40% of the test split).
-      max_total    -- keep at most this many test images overall (random subset).
-
-    Both None -> the entire test split. Indices come from the in-memory record
-    table (records[j][0] is the campaign), so capping costs no image I/O.
-    """
+per_campaign -- keep at most this many random test images *per campaign*.
+A balanced subset that keeps every class represented -- better for a quick
+debug pass than a raw total cap, whose random draw can starve the small
+campaigns (Hawaii is ~40% of the test split).
+"""
     if per_campaign is None and max_total is None:
         return LabeledFluxDataset(test_base, class_to_idx)
 
@@ -261,14 +206,11 @@ def pooled_dino(dino_model, rgb: torch.Tensor) -> torch.Tensor:
 @torch.no_grad()
 def compute_train_banks(train_ds, dino_model, pipe, args, want_real, want_gen):
     """One data-parallel pass over the train set -> (real_bank, gen_bank, labels).
-
-    Each rank embeds its stride: the real embedding is the pooled DINO of the real
-    RGB (resized to eval_size); the generated embedding is the pooled DINO of the
-    image FLUX generates when reference-conditioned on that same RGB. Both share
-    the batch's labels, so the two banks are aligned index-for-index. The per-rank
-    tensors are all-gathered so every rank holds the full banks. `pipe` is None
-    when the generated classifier is disabled (real embeddings only).
-    """
+Each rank embeds its stride: the real embedding is the pooled DINO of the real
+RGB (resized to eval_size); the generated embedding is the pooled DINO of the
+image FLUX generates when reference-conditioned on that same RGB. Both share
+the batch's labels, so the two banks are aligned index-for-index. The per-rank
+"""
     loader = _shard_loader(train_ds, args)
     real_feats, gen_feats, labels = [], [], []
     for rgb, label in tqdm(loader, desc="train embeddings", disable=not is_main()):

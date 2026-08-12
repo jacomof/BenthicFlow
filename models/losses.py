@@ -1,13 +1,6 @@
-"""Reconstruction + adversarial losses for RAE training.
+"""Reconstruction and adversarial losses for RAE training.
 
-Generator-side schedule:
-  Phase 1 (epochs 0..L_start):       L1_rgb + L1_depth
-  Phase 2 (epochs L_start..G_start): + LPIPS_rgb
-  Phase 3 (epochs G_start..end):     + GAN_rgb (adaptive lambda)
-
-Discriminator: frozen DINO-S/8 backbone + small trainable conv head, with
-DiffAugment (Zhao et al. 2020) applied to all inputs (real and fake) for
-data-efficient GAN training.
+Combines L1, LPIPS, SILog depth loss, and DINO-backed GAN discriminator loss.
 """
 
 from __future__ import annotations
@@ -204,17 +197,11 @@ def adaptive_lambda(rec_grad: torch.Tensor, gan_grad: torch.Tensor,
 def silog_loss(pred: torch.Tensor, target: torch.Tensor,
                lam: float = 0.85, eps: float = 1e-3) -> torch.Tensor:
     """Scale-invariant log loss, computed per-image then averaged.
-
-    g = log(pred) - log(target); loss = mean_b( E[g^2] - lam * E[g]^2 ),
-    where the expectations are over each image's pixels. Subtracting the
-    per-image mean error makes the loss invariant to a per-image multiplicative
-    depth scale, so deployments at different absolute depth scales contribute
-    equally without normalizing the data.
-
-    The depth maps here are unnormalized metric-ish values: targets contain
-    exact zeros in some frames and the decoder can emit negatives, so both are
-    floored at `eps` before the log to avoid -inf/nan.
-    """
+g = log(pred) - log(target); loss = mean_b( E[g^2] - lam * E[g]^2 ),
+where the expectations are over each image's pixels. Subtracting the
+per-image mean error makes the loss invariant to a per-image multiplicative
+depth scale, so deployments at different absolute depth scales contribute
+"""
     pred = pred.clamp_min(eps)
     target = target.clamp_min(eps)
     g = (torch.log(pred) - torch.log(target)).flatten(1)   # (B, H*W)
@@ -225,18 +212,11 @@ def silog_loss(pred: torch.Tensor, target: torch.Tensor,
 def multiscale_gradient_loss(pred: torch.Tensor, target: torch.Tensor,
                              num_scales: int = 4, eps: float = 1e-3) -> torch.Tensor:
     """Multi-scale gradient matching (MiDaS-style), in log-depth space.
-
-    Penalises the difference between the spatial gradients of pred and target
-    at several resolutions. Because the GT depth here is smooth, this term is
-    near-zero for clean output but strongly penalises high-frequency grain in
-    the prediction (e.g. texture leaking from the RGB LPIPS/GAN losses through
-    the shared decoder), while still permitting genuine depth edges where the
-    target actually has them.
-
-    Computed on log-depth so it stays scale-balanced across deployments,
-    consistent with `silog_loss`. Both inputs are floored at `eps` before the
-    log (targets contain exact zeros; the decoder can emit small/zero values).
-    """
+Penalises the difference between the spatial gradients of pred and target
+at several resolutions. Because the GT depth here is smooth, this term is
+near-zero for clean output but strongly penalises high-frequency grain in
+the prediction (e.g. texture leaking from the RGB LPIPS/GAN losses through
+"""
     diff = torch.log(pred.clamp_min(eps)) - torch.log(target.clamp_min(eps))
     total = diff.new_zeros(())
     for _ in range(num_scales):

@@ -1,33 +1,7 @@
-# scripts/eval_stitching.py
-"""Quantify MultiDiffusion stitching artifacts in generated images.
+"""Quantify MultiDiffusion stitching artifacts and seam gradient ratios.
 
-Tiled / MultiDiffusion generation (see test_panorama.py) integrates a large
-latent canvas with overlapping windows and blends them; this can leave visible
-seams where adjacent tiles meet -- an artifact reported by other tiled works.
-Here we expand a *square* canvas in both x and y (a `scale x scale` grid of
-tiles) and measure how abrupt the resulting seams are, and how the amount of
-window overlap affects them.
-
-Metric (seam gradient ratio)
-----------------------------
-Seams are axis-aligned lines, so we look at the gradient magnitude across them:
-vertical seams show up in the horizontal gradient |dI/dx|, horizontal seams in
-the vertical gradient |dI/dy|. Along each axis we form the 1D profile
-    g(u) = mean_{other axis, channels} |I(u+1) - I(u)|
-and report
-
-    seam_ratio = mean(g over seam bands) / mean(g over non-seam columns/rows).
-
-This is a *ratio* of per-pixel gradient densities, so it does not grow with the
-"stitching area" (number of seams, or overlap width) -- it only reflects how
-much sharper the image is at the seams than elsewhere. Informally:
-  ~1.0  -> seams indistinguishable from natural texture (good stitching)
-  >>1.0 -> abrupt, visible seams (bad stitching).
-We combine the x- and y-axis ratios into one score per image.
-
-We sweep several `stride` values (=> several overlap fractions) and, to isolate
-the effect of overlap, reuse the same seeds and the same initial noise across
-all strides for a given image index.
+Measures horizontal and vertical seam gradient ratios across overlapping tile strides
+to evaluate MultiDiffusion spatial stitching smoothness.
 """
 
 import sys
@@ -100,33 +74,11 @@ def generate_grid(model, rae, cond_tl, cond_tr, cond_bl, cond_br, scale=3,
                   n_steps=100, stride=8, cfg_scale=3.0, temperature=1.0,
                   batch_size=64, decode_batch_size=None, use_hann=True, device="cuda"):
     """2D MultiDiffusion: integrate a square [grid*scale, grid*scale] latent
-    canvas with overlapping windows sliding in *both* x and y, blended with a
-    separable Hann window. Conditioning is bilinearly interpolated between the
-    four corner seeds (top-left, top-right, bottom-left, bottom-right), so it
-    varies along both x and y instead of being row-independent.
-
-    `use_hann=False` swaps the tapered window for a uniform (box) one -- vanilla
-    MultiDiffusion averaging -- so the seams the taper normally hides become
-    visible (an ablation of the blend window itself).
-
-    cond_tl/tr/bl/br: [B, 768], one corner-condition set per image. All B
-    images (independent noise, shared tiling) are generated together.
-
-    Each image's windows and, on top of that, all B images are flattened into
-    one (image, window) task pool and batched up to `batch_size` tasks per
-    model forward pass (cond+uncond fused into one call like cfm_sample_cfg).
-    This matters most when a single image has few windows (large stride --
-    a lone image badly underfills the batch) and least when window count
-    alone already saturates batch_size (small stride).
-
-    The final decode is batched separately by `decode_batch_size` whole images
-    (defaults to `batch_size`). Keep this small independently of `batch_size`:
-    decoding runs the RAE mid-attention over the *whole* stitched canvas, whose
-    memory grows as decode_batch_size * (grid*scale)**4, so it blows up far
-    faster with scale than the fixed 16x16 windows of the integration loop.
-
-    Returns (rgb, depth), each [B, C, grid*scale*14, ...].
-    """
+canvas with overlapping windows sliding in *both* x and y, blended with a
+separable Hann window. Conditioning is bilinearly interpolated between the
+four corner seeds (top-left, top-right, bottom-left, bottom-right), so it
+varies along both x and y instead of being row-independent.
+"""
     grid, D = GRID, model.latent_dim
     B = cond_tl.shape[0]
     H = W = grid * scale
@@ -537,14 +489,11 @@ def replot_from_json(json_path):
 
 def run_variant(window, model, rae, conds, seed_rgbs, args, device):
     """One full stride sweep with the given blend window ('hann' | 'uniform').
-
-    Writes its metrics JSON, per-variant summary plot and diagnostics into its
-    own out dir (stitching / stitching_no_hann) and returns (overlaps, means,
-    ci95) for the combined figure. Conds/seeds come from the caller, so
-    --window both compares the two variants on IDENTICAL conditioning; the
-    per-stride torch.manual_seed further makes the initial noise identical
-    across variants, so the comparison isolates the blend window alone.
-    """
+Writes its metrics JSON, per-variant summary plot and diagnostics into its
+own out dir (stitching / stitching_no_hann) and returns (overlaps, means,
+ci95) for the combined figure. Conds/seeds come from the caller, so
+per-stride torch.manual_seed further makes the initial noise identical
+"""
     use_hann = window == "hann"
     cond_tl_all, cond_tr_all, cond_bl_all, cond_br_all = conds
     out_dir = FIG_ROOT / CFM_RUN_NAME / ("stitching" if use_hann else "stitching_no_hann")

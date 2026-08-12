@@ -284,20 +284,11 @@ def resolve_ply_sample(spec, records):
 
 def export_example_plys(sid, ply_rows, model, rae, args, bg, device, out_dir):
     """Regenerate sample `sid` (deterministic under the per-sample seed) and
-    write one .ply per requested ablation row into
-    out_dir/example_ply/sample_XXXX/, for the qualitative 3D figure
-    (fig:qualitative-3d). Exporting D_full and E_iso_full from the SAME sample
-    lets both be framed at one tilt in SuperSplat for a paired
-    surfel-vs-isotropic comparison.
-
-    The surfel-vs-isotropic contrast is only visible where the sample has actual
-    relief, so we also report the generated depth's contrast (std and 5-95
-    percentile span, in normalised [0,1] units and in lifted camera-range units)
-    and save the depth map as an image. A near-flat sample (e.g. open sand) will
-    look identical for both primitives at any angle regardless of seed -- the
-    fix for 'no depth' is to choose a higher-relief sample, not merely a
-    different one. A warning is printed when the relief is too small to make an
-    informative figure."""
+write one .ply per requested ablation row into
+out_dir/example_ply/sample_XXXX/, for the qualitative 3D figure
+(fig:qualitative-3d). Exporting D_full and E_iso_full from the SAME sample
+lets both be framed at one tilt in SuperSplat for a paired
+"""
     pdir = out_dir / "example_ply" / f"sample_{sid:04d}"
     pdir.mkdir(parents=True, exist_ok=True)
     # reproduce the exact sample-`sid` generation stream

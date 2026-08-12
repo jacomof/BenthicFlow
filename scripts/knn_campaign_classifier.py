@@ -1,29 +1,6 @@
-# scripts/knn_campaign_classifier.py
-"""Campaign classification with a k-NN over average-pooled DINOv2 embeddings.
+"""k-NN campaign classification evaluation.
 
-Two classifiers are trained and evaluated on the *same* real test split, so the
-only thing that differs between them is where the training embeddings come from:
-
-  * real      -- k-NN fit on pooled DINO embeddings of real *train* images.
-  * generated -- k-NN fit on pooled DINO embeddings of images the CFM *generates*
-                 when conditioned on each train image's DINO grid. Each generated
-                 sample inherits the campaign label of its conditioning image.
-
-Comparing the two accuracies answers: do the conditionally generated images carry
-the same campaign-discriminative content as the real images they were conditioned
-on? If the generated-trained k-NN classifies the real test split about as well as
-the real-trained one, the generator honours the campaign conditioning.
-
-Feature protocol (shared by every embedding here -- real train, generated train,
-and real test): DINOv2 patch tokens on the 224 crop the dataloader produces,
-mean-pooled over the grid to one [768] vector (dino_patch_embed, the same pooled
-DINO used elsewhere in the repo). We recompute rather than read the stored 518
-grid features so that all three sets live in one feature space -- generated images
-only exist at 224, so 224 is the common footing that keeps the comparison fair.
-
-Training set (per the task): 500 images of each campaign, drawn from the *train*
-split, one CSVSplitDataset per campaign concatenated into a single loader. Test
-set: the entire *test* split.
+Evaluates campaign classification accuracy using k-nearest neighbors on latent representations.
 """
 
 import sys
@@ -89,14 +66,11 @@ def campaign_to_class(campaign: str) -> str:
 
 class LabeledFeatureDataset(Dataset):
     """Wrap a (per-campaign or full) CSVSplitDataset to also emit a class label.
-
-    CSVSplitDataset yields (rgb, depth, dino) with no label; we recover the
-    campaign from its record table, collapse it to its site via campaign_to_class,
-    and map that through class_to_idx (a site -> index map). `indices` optionally
-    restricts to a subset (used to cap each campaign at N train images). Returns
-    (rgb, dino, label): rgb feeds the real-image embedding and dino (the stored
-    DINO grid) is mean-pooled into the CFM conditioning vector.
-    """
+CSVSplitDataset yields (rgb, depth, dino) with no label; we recover the
+campaign from its record table, collapse it to its site via campaign_to_class,
+and map that through class_to_idx (a site -> index map). `indices` optionally
+restricts to a subset (used to cap each campaign at N train images). Returns
+"""
 
     def __init__(self, base: CSVSplitDataset, class_to_idx: dict[str, int],
                  indices: list[int] | None = None):
@@ -117,17 +91,11 @@ class LabeledFeatureDataset(Dataset):
 def build_train_dataset(campaigns: list[str], class_to_idx: dict[str, int],
                         n_per_class: int, seed: int) -> ConcatDataset:
     """Class-balanced train set: n_per_class images per class, concatenated.
-
-    Each class's quota is split as evenly as possible across its campaigns, so a
-    multi-campaign site (ScottReef, Batemans) still spans all its deployments but
-    contributes the *same* total as a single-campaign site (Hawaii). A balanced
-    bank matters because the k-NN majority-votes over neighbours -- unequal class
-    counts would bias the vote toward the larger classes.
-
-    A random (seeded) subset is taken per campaign rather than the first N: CSV
-    order groups by deployment, so the first N would be a single deployment
-    instead of a representative sample.
-    """
+Each class's quota is split as evenly as possible across its campaigns, so a
+multi-campaign site (ScottReef, Batemans) still spans all its deployments but
+contributes the *same* total as a single-campaign site (Hawaii). A balanced
+bank matters because the k-NN majority-votes over neighbours -- unequal class
+"""
     rng = np.random.default_rng(seed)
     class_campaigns: dict[str, list[str]] = {}
     for c in campaigns:
@@ -159,16 +127,11 @@ def build_test_dataset(test_base: CSVSplitDataset, class_to_idx: dict[str, int],
                        per_campaign: int | None, max_total: int | None,
                        seed: int) -> LabeledFeatureDataset:
     """The full test split, with optional debug caps (applied in this order):
-
-      per_campaign -- keep at most this many random test images *per campaign*.
-        A balanced subset that keeps every class represented -- better for a quick
-        debug pass than a raw total cap, whose random draw can starve the small
-        campaigns (Hawaii is ~40% of the test split).
-      max_total    -- keep at most this many test images overall (random subset).
-
-    Both None -> the entire test split. Indices come from the in-memory record
-    table (records[j][0] is the campaign), so capping costs no image I/O.
-    """
+per_campaign -- keep at most this many random test images *per campaign*.
+A balanced subset that keeps every class represented -- better for a quick
+debug pass than a raw total cap, whose random draw can starve the small
+campaigns (Hawaii is ~40% of the test split).
+"""
     if per_campaign is None and max_total is None:
         return LabeledFeatureDataset(test_base, class_to_idx)
 
@@ -208,14 +171,11 @@ def generate_conditional(cfm, rae, cond: torch.Tensor, n_steps: int,
 
 def build_train_banks(loader, dino_model, cfm, rae, args):
     """One pass over the train loader -> (real_bank, gen_bank, labels).
-
-    Each batch yields the real RGB and the stored DINO grid for the same images.
-    The real embedding is the pooled DINO of the real RGB; the generated
-    embedding is the pooled DINO of the image the CFM produces when conditioned
-    on that grid's mean (the train-time conditioning vector). Both share the
-    batch's labels, so the two banks are aligned index-for-index. `cfm`/`rae`
-    are None when the generated classifier is disabled (real embeddings only).
-    """
+Each batch yields the real RGB and the stored DINO grid for the same images.
+The real embedding is the pooled DINO of the real RGB; the generated
+embedding is the pooled DINO of the image the CFM produces when conditioned
+on that grid's mean (the train-time conditioning vector). Both share the
+"""
     want_gen = cfm is not None
     real_feats, gen_feats, all_labels = [], [], []
     for rgb, dino, label in tqdm(loader, desc="train embeddings"):
