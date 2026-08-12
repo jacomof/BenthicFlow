@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+
+# 0th-degree Spherical Harmonics constant: 1 / (2 * sqrt(pi)) for 3D Gaussian Splatting color encoding
 SH_C0 = 0.28209479177387814
 
 

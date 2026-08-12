@@ -27,6 +27,7 @@ RAE_CKPT = CKPT_ROOT / "rae" / "last.pt"
 GRID = 16
 DECODER_UPSAMPLE = 14
 NATIVE_PX = GRID * DECODER_UPSAMPLE
+# 0th-degree Spherical Harmonics constant: 1 / (2 * sqrt(pi)) for 3D Gaussian Splatting color encoding
 SH_C0 = 0.28209479177387814
 LEFT_CAMPAIGN = "Hawaii201801"
 RIGHT_CAMPAIGN = "Batemans201011"
