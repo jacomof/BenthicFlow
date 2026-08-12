@@ -20,6 +20,7 @@ from __future__ import annotations
 # '-dpf'-suffixed data roots. Forces REEF_VARIANT=dpf so REEF resolves
 # features-dpf/, depth-dpf/, rgb-dpf/, checkpoints-dpf/, data_normalized-dpf/.
 import os as _os
+_os.environ["BENTHICFLOW_VARIANT"] = "dpf"
 _os.environ["REEF_VARIANT"] = "dpf"
 
 
@@ -46,7 +47,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from tqdm import tqdm
-from REEF import CKPT_ROOT, FIG_ROOT, DEPTH_ROOT, FEAT_ROOT, PROJECT_ROOT, SCRATCH_ROOT, DATA_NORM_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT, DEPTH_ROOT, FEAT_ROOT, PROJECT_ROOT, SCRATCH_ROOT, DATA_NORM_ROOT
 from models.rae import (RAE, RAEConfig, DepthEncoderConfig,
                         ConvDecoderConfig, TokenLayerNorm)
 from models.losses import (RAELoss, DinoDiscriminator, silog_loss,

@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.cluster import KMeans
 
-from REEF import FIG_ROOT
-from REEF.reef_io import iter_feature_files
-from REEF.viz import features_to_rgb, load_pca_rgb
+from benthicflow import FIG_ROOT
+from benthicflow.reef_io import iter_feature_files
+from benthicflow.viz import features_to_rgb, load_pca_rgb
 
 
 # ----------------------------- helpers ------------------------------------

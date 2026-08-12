@@ -4,6 +4,7 @@
 # '-dpf'-suffixed data roots. Forces REEF_VARIANT=dpf so REEF resolves
 # features-dpf/, depth-dpf/, rgb-dpf/, checkpoints-dpf/, data_normalized-dpf/.
 import os as _os
+_os.environ["BENTHICFLOW_VARIANT"] = "dpf"
 _os.environ["REEF_VARIANT"] = "dpf"
 
 """Extract DINOv2 patch-token grids natively at 518x518 from raw directories.
@@ -27,7 +28,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
 
-from REEF import FEAT_ROOT, DATA_NORM_ROOT, PROJECT_ROOT, SCRATCH_ROOT, DEPTH_ROOT
+from benthicflow import FEAT_ROOT, DATA_NORM_ROOT, PROJECT_ROOT, SCRATCH_ROOT, DEPTH_ROOT
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

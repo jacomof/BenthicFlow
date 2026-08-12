@@ -13,13 +13,16 @@ export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$PROJECT_ROOT"
 
 # Fast shared scratch holding the preprocessed dataset (features/, depth/,
 # rgb/) and checkpoints/. EDIT THESE for your cluster / username.
-export REEF_SCRATCH_ROOT="/scratch-shared/$USER/reef/"
-export REEF_DATA_SCRATCH_ROOT="/scratch-shared/$USER/reef/data/"
+export BENTHICFLOW_SCRATCH_ROOT="/scratch-shared/$USER/benthicflow/"
+export BENTHICFLOW_DATA_SCRATCH_ROOT="/scratch-shared/$USER/benthicflow/data/"
+export REEF_SCRATCH_ROOT="$BENTHICFLOW_SCRATCH_ROOT"
+export REEF_DATA_SCRATCH_ROOT="$BENTHICFLOW_DATA_SCRATCH_ROOT"
 
 # Node-local scratch: jobs submitted with --constraint=scratch-node copy the
 # dataset here for fast sequential reads (jobs that read from shared scratch
-# instead simply re-point this at REEF_SCRATCH_ROOT).
-export REEF_SCRATCH_NODE_ROOT="${TMPDIR:-/tmp}/$USER/reef/node/"
+# instead simply re-point this at BENTHICFLOW_SCRATCH_ROOT).
+export BENTHICFLOW_SCRATCH_NODE_ROOT="${TMPDIR:-/tmp}/$USER/benthicflow/node/"
+export REEF_SCRATCH_NODE_ROOT="$BENTHICFLOW_SCRATCH_NODE_ROOT"
 
 # Model caches, kept off $HOME because of its small quota. EDIT for your user.
 export HF_HOME="/scratch-shared/$USER/hf_models"

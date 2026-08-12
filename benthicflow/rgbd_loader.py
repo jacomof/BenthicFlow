@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 from torchvision import transforms
 
-from REEF.reef_io import depth_paths, normalized_image_path
+from .reef_io import depth_paths, normalized_image_path
 
 NATIVE_SIZE = 518
 

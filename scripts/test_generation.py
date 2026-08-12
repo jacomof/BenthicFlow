@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from REEF import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, \
+from benthicflow import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, \
     RGB_ROOT
 from models.unet_cfm import UNetCFM, cfm_sample_cfg
 from scripts.train_cfm_cfg import load_rae_frozen

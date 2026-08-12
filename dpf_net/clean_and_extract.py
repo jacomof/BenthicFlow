@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from REEF.reef_io import DEPTH_ROOT, DATA_ROOT
+from benthicflow.reef_io import DEPTH_ROOT, DATA_ROOT
 
 start_time = str(datetime.now())[0:19].replace(' ', '-')
 

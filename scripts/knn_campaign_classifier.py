@@ -53,7 +53,7 @@ from matplotlib.colors import LinearSegmentedColormap
 # before load_dinov2() triggers the dinov2 import.
 warnings.filterwarnings("ignore", message="xFormers is available")
 
-from REEF import PROJECT_ROOT, FIG_ROOT
+from benthicflow import PROJECT_ROOT, FIG_ROOT
 from scripts.test_generation import CSVSplitDataset, dino_patch_embed, decode, DEVICE
 from scripts.extract_features import load_dinov2
 from scripts.train_cfm_cfg import load_rae_frozen

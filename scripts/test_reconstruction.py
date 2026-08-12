@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from REEF import FIG_ROOT
+from benthicflow import FIG_ROOT
 from scripts.train_cfm_cfg import load_rae_frozen
 from scripts.test_generation import (
     CSVSplitDataset, DEVICE, build_metrics, format_metrics,

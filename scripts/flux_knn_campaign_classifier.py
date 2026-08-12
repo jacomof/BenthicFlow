@@ -70,7 +70,7 @@ from matplotlib.colors import LinearSegmentedColormap
 # before load_dinov2() triggers the dinov2 import.
 warnings.filterwarnings("ignore", message="xFormers is available")
 
-from REEF import PROJECT_ROOT, FIG_ROOT
+from benthicflow import PROJECT_ROOT, FIG_ROOT
 from scripts.test_generation import dino_patch_embed
 from scripts.extract_features import load_dinov2
 # The FLUX pipeline, generator, resize helper, full-frame dataset and the

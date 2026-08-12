@@ -280,7 +280,7 @@ class ConvDecoderConfig:
     # REEF_VARIANT so DPF checkpoints are never silently decoded with the wrong
     # head; it can still be overridden explicitly.
     depth_activation:  str = field(default_factory=lambda: (
-        "softplus" if os.environ.get("REEF_VARIANT", "").lower() == "dpf" else "sigmoid"))
+        "softplus" if (os.environ.get("BENTHICFLOW_VARIANT") or os.environ.get("REEF_VARIANT", "")).lower() == "dpf" else "sigmoid"))
 
 
 class ConvDecoder(nn.Module):

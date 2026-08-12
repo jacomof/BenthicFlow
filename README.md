@@ -68,12 +68,12 @@ deterministically (fixed seed) into `data_split/` by `slurm/data/split_data.sh`.
 ## Repository layout
 
 ```
-reef/
-├── REEF/            core package: path config (reads env vars), I/O helpers, viz
+BenthicFlow/
+├── benthicflow/     core package: path config, I/O helpers, RGBD loaders, viz
 ├── models/          d-RAE, U-Net CFM, masked CFM, losses
-├── data_utils/      Squidle+ download, campaign discovery, RGBD loaders
+├── data_utils/      Squidle+ download, campaign discovery scripts
 ├── scripts/         all Python entry points (run as `python scripts/<name>.py`)
-│                    (*_dpf.py = BenthicFlow-DPF forks; they force REEF_VARIANT=dpf)
+│                    (*_dpf.py = BenthicFlow-DPF forks; they force BENTHICFLOW_VARIANT=dpf)
 ├── dpf_net/         vendored DPF-Net enhancement network (upstream code + DPEM
 │                    + bundled Depth-Anything-V2) and clean_and_extract.py
 ├── slurm/           all SLURM job scripts, grouped by pipeline stage
@@ -98,7 +98,7 @@ evaluation a single A100).
 **1. Clone and create the environment:**
 
 ```bash
-git clone <this-repo> reef && cd reef
+git clone <this-repo> BenthicFlow && cd BenthicFlow
 mamba env create -f environment.yml     # creates env "ocean2"
 mkdir -p logs                           # SLURM job logs land here
 ```
@@ -110,9 +110,9 @@ locations for your cluster/user:
 |---|---|
 | `CURRENT_ENV` | conda env name (`ocean2`) |
 | `PROJECT_ROOT` | repo root; defaults to the submit directory |
-| `REEF_SCRATCH_ROOT` | fast shared scratch for `features/ depth/ rgb/ checkpoints/` |
-| `REEF_DATA_SCRATCH_ROOT` | where raw Squidle+ pulls land |
-| `REEF_SCRATCH_NODE_ROOT` | node-local scratch (`$TMPDIR/…`) used by DDP jobs |
+| `BENTHICFLOW_SCRATCH_ROOT` | fast shared scratch for `features/ depth/ rgb/ checkpoints/` |
+| `BENTHICFLOW_DATA_SCRATCH_ROOT` | where raw Squidle+ pulls land |
+| `BENTHICFLOW_SCRATCH_NODE_ROOT` | node-local scratch (`$TMPDIR/…`) used by DDP jobs |
 | `HF_HOME`, `TORCH_HOME` | model caches, kept off `$HOME` quotas |
 
 **3. Secrets** go in an untracked `env.local.sh` (sourced automatically by

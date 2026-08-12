@@ -4,6 +4,7 @@
 # '-dpf'-suffixed data roots. Forces REEF_VARIANT=dpf so REEF resolves
 # features-dpf/, depth-dpf/, rgb-dpf/, checkpoints-dpf/, data_normalized-dpf/.
 import os as _os
+_os.environ["BENTHICFLOW_VARIANT"] = "dpf"
 _os.environ["REEF_VARIANT"] = "dpf"
 
 # scripts/test_panorama.py
@@ -25,7 +26,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from REEF import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, \
+from benthicflow import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, \
     RGB_ROOT
 from models.unet_cfm import UNetCFM, cfm_sample_cfg
 from scripts.train_cfm_cfg_dpf import load_rae_frozen

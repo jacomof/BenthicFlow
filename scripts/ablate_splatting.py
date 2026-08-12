@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-from REEF import CKPT_ROOT, FIG_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT
 from models.unet_cfm import UNetCFM
 from scripts.train_cfm_cfg import load_rae_frozen
 from scripts.test_panorama import sample_conditioning

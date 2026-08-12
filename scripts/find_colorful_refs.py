@@ -36,7 +36,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from REEF import FIG_ROOT, PROJECT_ROOT
+from benthicflow import FIG_ROOT, PROJECT_ROOT
 from scripts.test_panorama import RGB_SRC, FEAT_SRC
 
 DATA_NORM = PROJECT_ROOT / "data_normalized"

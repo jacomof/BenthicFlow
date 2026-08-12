@@ -7,6 +7,7 @@ from __future__ import annotations
 # '-dpf'-suffixed data roots. Forces REEF_VARIANT=dpf so REEF resolves
 # features-dpf/, depth-dpf/, rgb-dpf/, checkpoints-dpf/, data_normalized-dpf/.
 import os as _os
+_os.environ["BENTHICFLOW_VARIANT"] = "dpf"
 _os.environ["REEF_VARIANT"] = "dpf"
 
 
@@ -19,7 +20,7 @@ from PIL import Image
 from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
-from REEF import DATA_NORM_ROOT, SCRATCH_ROOT
+from benthicflow import DATA_NORM_ROOT, SCRATCH_ROOT
 
 # Source keys live next to the depth arrays. DEPTH_ROOT may point at node-local;
 # the keys are also on the shared source, so resolve from SCRATCH_ROOT here.

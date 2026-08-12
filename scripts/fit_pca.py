@@ -11,8 +11,8 @@ import joblib
 import numpy as np
 from sklearn.decomposition import PCA, IncrementalPCA
 
-from REEF import PCA_ROOT
-from REEF.reef_io import iter_feature_files
+from benthicflow import PCA_ROOT
+from benthicflow.reef_io import iter_feature_files
 
 
 def collect_patch_pool(max_samples: int | None) -> np.ndarray:

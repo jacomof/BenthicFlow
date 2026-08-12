@@ -9,8 +9,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from REEF.reef_io import feature_path
-from data_utils.rgbd_loader import NATIVE_SIZE, RGBDImageLoader
+from .reef_io import feature_path
+from .rgbd_loader import NATIVE_SIZE, RGBDImageLoader
 
 
 class RGBDFeatureDataset(Dataset):

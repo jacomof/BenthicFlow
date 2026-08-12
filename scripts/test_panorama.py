@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from REEF import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT
 from models.unet_cfm import UNetCFM
 from scripts.train_cfm_cfg import load_rae_frozen
 

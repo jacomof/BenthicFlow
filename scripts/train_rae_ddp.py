@@ -40,7 +40,7 @@ from torchvision import transforms
 from torchvision.transforms import functional as TF
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
-from REEF import CKPT_ROOT, FIG_ROOT, DEPTH_ROOT, FEAT_ROOT, PROJECT_ROOT, SCRATCH_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT, DEPTH_ROOT, FEAT_ROOT, PROJECT_ROOT, SCRATCH_ROOT
 from models.rae import (RAE, RAEConfig, DepthEncoderConfig,
                         ConvDecoderConfig, TokenLayerNorm)
 from models.losses import RAELoss, DinoDiscriminator

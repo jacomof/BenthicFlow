@@ -31,7 +31,7 @@ from matplotlib.patches import ConnectionPatch
 # DINOv2 layers warn once each that xFormers is available; informational only.
 warnings.filterwarnings("ignore", message="xFormers is available")
 
-from REEF import CKPT_ROOT, FIG_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT
 from models.unet_cfm import UNetCFM
 from scripts.train_cfm_cfg import load_rae_frozen
 from scripts.test_panorama import CFM_RUN_NAME, RAE_CKPT, GRID, RGB_SRC, FEAT_SRC

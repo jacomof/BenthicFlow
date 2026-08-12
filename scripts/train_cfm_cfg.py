@@ -31,7 +31,7 @@ from torchvision.transforms import functional as TF
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
 
-from REEF import CKPT_ROOT, FIG_ROOT, DEPTH_ROOT, FEAT_ROOT, RGB_ROOT, PROJECT_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT, DEPTH_ROOT, FEAT_ROOT, RGB_ROOT, PROJECT_ROOT
 from models.rae import RAE, RAEConfig, DepthEncoderConfig, ConvDecoderConfig
 from models.unet_cfm import UNetCFM, cfm_sample_cfg
 from scripts.train_rae_ddp import EMA

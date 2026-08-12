@@ -12,7 +12,7 @@ from PIL import Image
 from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
-from REEF import SCRATCH_ROOT, DEPTH_ROOT, DATA_NORM_ROOT
+from benthicflow import SCRATCH_ROOT, DEPTH_ROOT, DATA_NORM_ROOT
 
 # Source keys live next to the depth arrays. DEPTH_ROOT may point at node-local;
 # the keys are also on the shared source, so resolve from SCRATCH_ROOT here.

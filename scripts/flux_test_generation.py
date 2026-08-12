@@ -62,7 +62,7 @@ import csv
 import torchvision.transforms.functional as TF
 
 
-from REEF import FIG_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, RGB_ROOT
+from benthicflow import FIG_ROOT, PROJECT_ROOT, DEPTH_ROOT, FEAT_ROOT, RGB_ROOT
 from scripts.test_generation import TRAIN_SIZE, _DINOv2CLS, DEVICE
 from scripts.extract_features import load_dinov2
 from scripts.flux_generation import REEF_PROMPT, resize_to_multiple_of_16, DEV_ID

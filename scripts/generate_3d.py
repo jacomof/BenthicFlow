@@ -20,9 +20,9 @@ from typing import Tuple
 
 import numpy as np
 
-from data_utils.rgbd_loader import RGBDImageLoader
-from data_utils.rgbd_loader import resize_shorter_then_center_crop
-from REEF.reef_io import depth_paths
+from benthicflow import RGBDImageLoader
+from benthicflow import resize_shorter_then_center_crop
+from benthicflow.reef_io import depth_paths
 
 
 

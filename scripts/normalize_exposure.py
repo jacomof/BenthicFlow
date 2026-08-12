@@ -17,8 +17,8 @@ from kornia.color import rgb_to_lab, lab_to_rgb
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from REEF import DATA_NORM_ROOT
-from REEF.reef_io import iter_deployments, load_manifest, normalized_image_path
+from benthicflow import DATA_NORM_ROOT
+from benthicflow.reef_io import iter_deployments, load_manifest, normalized_image_path
 import pickle
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

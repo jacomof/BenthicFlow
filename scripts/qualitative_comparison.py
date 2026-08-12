@@ -91,7 +91,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from REEF import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT, SCRATCH_ROOT
 
 # ---- the 3 hand-picked conditioning images (1 per site, column order) ------ #
 DATA_NORM = Path("./data_normalized/")

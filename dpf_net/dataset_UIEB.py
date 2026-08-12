@@ -13,7 +13,7 @@ import random
 import cv2
 from pathlib import Path
 import pickle
-from REEF.reef_io import iter_deployments, load_manifest, normalized_image_path, depth_path
+from benthicflow.reef_io import iter_deployments, load_manifest, normalized_image_path, depth_path
 
 
 def collect_jobs(campaigns):
