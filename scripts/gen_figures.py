@@ -1,7 +1,11 @@
 import argparse
 import json
 from pathlib import Path
- 
+import sys
+
+# Ensure repo root is on sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 import torch
 import cv2
@@ -10,13 +14,10 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import torch.nn.functional as F
 from tqdm import tqdm
- 
-# Adjust these imports based on your exact project structure
-from models.rae import RAE, RAEConfig, DepthEncoderConfig, ConvDecoderConfig
-from models.cfm import MaskedCFM, MaskedCFMConfig, cfm_sample
- 
 
- 
+from models.unet_cfm import UNetCFM, cfm_sample_cfg
+from scripts.train_cfm_cfg import load_rae_frozen
+
 plt.rcParams.update({
     "font.family": "serif",
     "font.serif": ["Times New Roman", "Computer Modern Roman"],
@@ -33,40 +34,28 @@ plt.rcParams.update({
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
 })
- 
+
 def load_models(rae_ckpt: str, cfm_ckpt: str, device: torch.device):
-    """Loads frozen RAE and trained CFM."""
+    """Loads frozen RAE and trained UNetCFM."""
     print("Loading RAE...")
-    rae_cfg = RAEConfig(
-        depth_cfg=DepthEncoderConfig(patch_size=14, dim=256, depth=8, num_heads=8, out_dim=256),
-        decoder_cfg=ConvDecoderConfig(
-            in_dim=768 + 256, hidden_dims=(512, 256, 128), upsample_factors=(2, 7),
-            num_res_blocks=2, groups=32, out_channels=4, use_mid_attention=True
-        ),
-        noise_tau=0.8,
-    )
-    rae = RAE(rae_cfg).to(device)
-    ck_rae = torch.load(rae_ckpt, map_location=device, weights_only=True)
-    rae.load_state_dict(ck_rae.get("ema", ck_rae.get("rae", ck_rae)), strict=False)
-    rae.eval().requires_grad_(False)
- 
-    print("Loading CFM...")
+    rae = load_rae_frozen(Path(rae_ckpt), device)
+
+    print("Loading UNetCFM...")
+    cfm = UNetCFM().to(device)
     ck_cfm = torch.load(cfm_ckpt, map_location=device, weights_only=True)
-    args = ck_cfm["args"]
-    cfm_cfg = MaskedCFMConfig(
-        grid_size=16, latent_dim=args["model_dim"], model_dim=args["model_dim"],
-        depth=args["model_depth"], num_heads=args["model_heads"], mlp_ratio=4.0, dropout=0.0
-    )
-    cfm = MaskedCFM(cfm_cfg).to(device)
-    cfm.load_state_dict(ck_cfm["ema"])
-    
+    state = ck_cfm.get("ema", ck_cfm.get("model", ck_cfm))
+    cfm.load_state_dict(state, strict=False)
+
     if "model" in ck_cfm:
         cfm.latent_mean.copy_(ck_cfm["model"].get("latent_mean", cfm.latent_mean))
         cfm.latent_std.copy_(ck_cfm["model"].get("latent_std", cfm.latent_std))
-        
+    elif "latent_mean" in ck_cfm:
+        cfm.latent_mean.copy_(ck_cfm["latent_mean"])
+        cfm.latent_std.copy_(ck_cfm["latent_std"])
+
     cfm.eval().requires_grad_(False)
     return rae, cfm
- 
+
 def tensor_to_mesh(rgb_tensor, depth_tensor, out_prefix, min_d=3.0, max_d=4.5, focal_mm=14.0):
     """Converts generated RGB-D tensors to highly optimized PLY point clouds and meshes."""
     rgb = (rgb_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
@@ -79,15 +68,15 @@ def tensor_to_mesh(rgb_tensor, depth_tensor, out_prefix, min_d=3.0, max_d=4.5, f
     fx = focal_mm * (w / sensor_width_mm)
     fy = fx
     cx, cy = w / 2.0, h / 2.0
- 
+
     u, v = np.meshgrid(np.arange(w), np.arange(h))
     
     x = (u - cx) * depth_z / fx
     y = (v - cy) * depth_z / fy
- 
+
     points = np.stack((x, y, depth_z), axis=-1).reshape(-1, 3)
     colors = rgb.reshape(-1, 3) / 255.0
- 
+
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     pcd.colors = o3d.utility.Vector3dVector(colors)
@@ -96,172 +85,144 @@ def tensor_to_mesh(rgb_tensor, depth_tensor, out_prefix, min_d=3.0, max_d=4.5, f
     o3d.io.write_point_cloud(f"{out_prefix}_points.ply", pcd)
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     pcd.orient_normals_towards_camera_location(camera_location=np.array([0., 0., 0.]))
- 
+
     mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=7)
     mesh = mesh.crop(pcd.get_axis_aligned_bounding_box())
     o3d.io.write_triangle_mesh(f"{out_prefix}_mesh.ply", mesh)
     print(f"Saved optimized 3D assets to {out_prefix}_mesh.ply")
- 
-@torch.no_grad()
-def cfm_sample_multidiffusion_hybrid(model, canvas_known, canvas_mask, n_steps=150, avg_end_t=1.0, window_overlap=0.1):
-    """
-    Hybrid MultiDiffusion: Averages overlapping tiles early to build global structure,
-    but switches to independent hard-overwrites late in the ODE to prevent textural ghosting.
-    """
-    device = canvas_known.device
-    _, H, W, D = canvas_known.shape
-    grid = model.cfg.grid_size
- 
-    z = torch.randn(1, H, W, D, device=device)
-    ts = torch.linspace(0, 1, n_steps + 1, device=device)
-    stride = int(grid * (1 - window_overlap))
-    print(f"Using stride {stride} for hybrid multi-diffusion sampling.")
-    print(f"Averaging until t = {avg_end_t} and using overlap ratio of {window_overlap} for tile sampling.")
 
-    
+@torch.no_grad()
+def cfm_sample_multidiffusion_hybrid(model: UNetCFM, cond_left: torch.Tensor | None = None,
+                                     cond_right: torch.Tensor | None = None,
+                                     tiles_h: int = 2, tiles_w: int = 4,
+                                     n_steps: int = 150, cfg_scale: float = 3.0,
+                                     window_overlap: float = 0.1) -> torch.Tensor:
+    """
+    MultiDiffusion sampling with UNetCFM across overlapping 16x16 windows.
+    Interpolates conditioning vectors (cond_left to cond_right) across the panorama width.
+    """
+    device = next(model.parameters()).device
+    grid = 16
+    D = model.latent_dim
+    H, W = grid * tiles_h, grid * tiles_w
+
+    if cond_left is None:
+        cond_left = model.null_cond.unsqueeze(0)
+    if cond_right is None:
+        cond_right = model.null_cond.unsqueeze(0)
+
+    # 2D Hann window for smooth spatial blending across overlapping tiles
+    win_h = torch.sin(torch.linspace(0.05, 0.95, grid, device=device) * torch.pi).view(1, 1, grid, 1)
+    win_w = torch.sin(torch.linspace(0.05, 0.95, grid, device=device) * torch.pi).view(1, 1, 1, grid)
+    win = win_h * win_w
+
+    z = torch.randn(1, D, H, W, device=device)
+    ts = torch.linspace(0, 1, n_steps + 1, device=device)
+    dt = ts[1] - ts[0]
+
+    stride = int(grid * (1.0 - window_overlap))
+    y_origins = list(range(0, H - grid + 1, stride))
+    if y_origins[-1] != H - grid:
+        y_origins.append(H - grid)
+    x_origins = list(range(0, W - grid + 1, stride))
+    if x_origins[-1] != W - grid:
+        x_origins.append(W - grid)
+
+    null_cond = model.null_cond.unsqueeze(0)
+
+    print(f"Using stride {stride} for UNetCFM MultiDiffusion sampling.")
+
     for i in range(n_steps):
-        t_cur, t_next = ts[i], ts[i + 1]
-        is_averaging = t_cur <= avg_end_t
-        y_origins = list(range(0, H - grid + 1, stride))
-        if y_origins[-1] != H - grid:
-            y_origins.append(H - grid)
-        x_origins = list(range(0, W - grid + 1, stride))
-        if x_origins[-1] != W - grid:
-            x_origins.append(W - grid)
- 
-        v_sum = torch.zeros_like(z)
-        v_cnt = torch.zeros(1, H, W, 1, device=device)
- 
-        for y in y_origins:
-            for x in x_origins:
-                z_tile = z[:, y:y + grid, x:x + grid, :]
-                k_tile = torch.zeros_like(z_tile)  # No known latents in this setting
-                m_tile = torch.zeros_like(z_tile[:, :, :, :1])  # No mask in this setting
-                
-                v_flat = model(
-                    z_tile.reshape(1, grid * grid, D),
-                    t_cur.expand(1),
-                    m_tile.reshape(1, grid * grid, 1),
-                    k_tile.reshape(1, grid * grid, D)
-                )
-                v_tile = v_flat.reshape(1, grid, grid, D)
-                
-                if is_averaging:
-                    v_sum[:, y:y + grid, x:x + grid, :] += v_tile
-                    v_cnt[:, y:y + grid, x:x + grid, :] += 1.0
+        t_cur = ts[i].expand(1)
+        vel = torch.zeros_like(z)
+        wacc = torch.zeros(1, 1, H, W, device=device)
+
+        for y0 in y_origins:
+            y1 = y0 + grid
+            for x0 in x_origins:
+                x1 = x0 + grid
+                # Interpolate conditioning across panorama width
+                alpha = (x0 + grid / 2.0) / W
+                cond_w = (1.0 - alpha) * cond_left + alpha * cond_right
+
+                zc = z[:, :, y0:y1, x0:x1]
+
+                v_cond = model(zc, t_cur, cond_w)
+                if cfg_scale != 1.0:
+                    v_uncond = model(zc, t_cur, null_cond)
+                    v = v_uncond + cfg_scale * (v_cond - v_uncond)
                 else:
-                    v_sum[:, y:y + grid, x:x + grid, :] = v_tile
-                    v_cnt[:, y:y + grid, x:x + grid, :] = 1.0
- 
-        v = v_sum / v_cnt
-        z = z + (t_next - t_cur) * v
- 
-    # Final spatial constraint
-    z = canvas_mask * canvas_known + (1.0 - canvas_mask) * z
+                    v = v_cond
+
+                vel[:, :, y0:y1, x0:x1] += v * win
+                wacc[:, :, y0:y1, x0:x1] += win
+
+        z = z + (vel / (wacc + 1e-8)) * dt
+
     return z
- 
+
 @torch.no_grad()
 def generate_fig1_panorama(rae, cfm, latents_mm, device, out_dir, window_overlap=0.1, avg_end_t=1.0, num_image=None):
-    """Generates a highly diverse panorama using Sparse Seeding and Hybrid MultiDiffusion."""
-    print(f"Generating Figure {num_image} (Hybrid MultiDiffusion Panorama)...")
-    grid = cfm.cfg.grid_size
-    print(f"Using grid size: {grid}")
-    D = cfm.cfg.latent_dim
-    tiles_h, tiles_w = 2, 4  
-    H, W = grid * tiles_h, grid * tiles_w
+    """Generates a panorama using MultiDiffusion with UNetCFM."""
+    print(f"Generating Figure {num_image} (MultiDiffusion Panorama with UNetCFM)...")
     
-    canvas = torch.ones(1, H, W, D, device=device)
-    mask = torch.zeros(1, H, W, 1, device=device)
-
-    print(f"latents_mm is: {latents_mm}")
-    if latents_mm is not None:
+    cond_left, cond_right = None, None
+    if latents_mm is not None and len(latents_mm) > 0:
         num_records = len(latents_mm)
-        
-        num_random_patches = 15
-        for _ in range(num_random_patches):
-            rand_idx = np.random.randint(0, num_records)
-            z_rand = torch.from_numpy(np.array(latents_mm[rand_idx])).float().to(device)
-            z_rand_norm = cfm.normalize(z_rand).view(1, grid, grid, D)
-            
-            r = torch.randint(0, H - 2, (1,)).item()
-            c = torch.randint(0, W - 2, (1,)).item()
-            r_z = torch.randint(0, grid - 2, (1,)).item()
-            c_z = torch.randint(0, grid - 2, (1,)).item()
-            
-            canvas[:, r:r+2, c:c+2, :] = z_rand_norm[:, r_z:r_z+2, c_z:c_z+2, :]
-            mask[:, r:r+2, c:c+2, :] = 1.0
- 
-        # Anchor extreme ends
-        idx_start, idx_end = np.random.randint(0, num_records, size=2)
-        z_start = cfm.normalize(torch.from_numpy(np.array(latents_mm[idx_start])).float().to(device)).view(1, grid, grid, D)
-        z_end = cfm.normalize(torch.from_numpy(np.array(latents_mm[idx_end])).float().to(device)).view(1, grid, grid, D)
-        
-        canvas[:, 0:grid, 0:grid, :] = z_start
-        mask[:, 0:grid, 0:grid, :] = 1.0
-        canvas[:, -grid:, -grid:, :] = z_end
-        mask[:, -grid:, -grid:, :] = 1.0
+        idx_start, idx_end = np.random.choice(num_records, size=2, replace=False)
+        feat_l = np.array(latents_mm[idx_start])
+        feat_r = np.array(latents_mm[idx_end])
+        cond_left = torch.from_numpy(feat_l).float().reshape(1, -1).to(device)[:, :768]
+        cond_right = torch.from_numpy(feat_r).float().reshape(1, -1).to(device)[:, :768]
     else:
-        print("Warning: No latent cache provided, generating pure random panorama.")
-        canvas = torch.zeros(1, H, W, D, device=device)
-        mask = torch.zeros(1, H, W, 1, device=device)
- 
-    z_canvas = cfm_sample_multidiffusion_hybrid(cfm, canvas, mask, n_steps=150, avg_end_t=avg_end_t, window_overlap=window_overlap)
- 
+        print("Warning: No latent cache provided, generating unconditional panorama.")
+
+    z_canvas = cfm_sample_multidiffusion_hybrid(
+        cfm, cond_left, cond_right, tiles_h=2, tiles_w=4,
+        n_steps=150, cfg_scale=3.0, window_overlap=window_overlap
+    )
+
     z_denorm = cfm.denormalize(z_canvas)
-    rgbd = rae.decoder(z_denorm)
+    fused = z_denorm.permute(0, 2, 3, 1).contiguous()
+    rgbd = rae.decoder(fused)
     rgb, depth = rgbd[0, :3].clamp(0, 1), rgbd[0, 3:4].clamp(0, 1)
- 
-    #tensor_to_mesh(rgb, depth, str(out_dir / "fig1_panorama"))
- 
+
     fig, axes = plt.subplots(2, 1, figsize=(10, 5))
     axes[0].imshow(rgb.permute(1, 2, 0).cpu().numpy())
-    axes[0].set_title("Hybrid MultiDiffusion Panorama (RGB)")
+    axes[0].set_title("UNetCFM MultiDiffusion Panorama (RGB)")
     axes[0].axis("off")
     
     im = axes[1].imshow(depth.squeeze().cpu().numpy(), cmap="viridis")
-    axes[1].set_title("Hybrid MultiDiffusion Panorama (Depth)")
+    axes[1].set_title("UNetCFM MultiDiffusion Panorama (Depth)")
     axes[1].axis("off")
     fig.colorbar(im, ax=axes[1], fraction=0.015, pad=0.02)
     
-    print(f"Saving Figure {num_image} to {out_dir / f'fig1_panorama_{num_image}.pdf'}")
-    plt.savefig(out_dir / f"fig1_panorama_{num_image}.pdf")
+    out_file = out_dir / f"fig1_panorama_{num_image}.pdf"
+    print(f"Saving Figure {num_image} to {out_file}")
+    plt.savefig(out_file)
     plt.close()
- 
+
 @torch.no_grad()
-def generate_fig2_conditional(rae, cfm, real_latent, device, out_dir):
-    """Shows original, masked context (with random scattered patches), and generation."""
-    print("Generating Figure 2 (Conditional with Scattered Patches)...")
-    grid = cfm.cfg.grid_size
-    z_real = cfm.normalize(real_latent.to(device).unsqueeze(0))
+def generate_fig2_conditional(rae, cfm, cond, device, out_dir):
+    """Shows unconditional generation vs conditioned UNetCFM generation."""
+    print("Generating Figure 2 (Unconditional vs Conditional UNetCFM)...")
     
-    mask = torch.zeros(1, grid, grid, 1, device=device)
+    # 1. Unconditional (CFG=1.0)
+    z_uncond = cfm_sample_cfg(cfm, cfm.null_cond.unsqueeze(0), canvas_shape=(16, 16), n_steps=150, cfg_scale=1.0)
+    rgbd_uncond = rae.decoder(cfm.denormalize(z_uncond).permute(0, 2, 3, 1).contiguous()).clamp(0, 1)[0]
     
-    mask[:, 0:2, :, :] = 1.0
-    mask[:, -2:, :, :] = 1.0
-    mask[:, :, 0:2, :] = 1.0
-    mask[:, :, -2:, :] = 1.0
+    # 2. Conditional (CFG=3.0)
+    if cond.dim() == 1:
+        cond = cond.unsqueeze(0)
+    cond = cond.to(device)
+    z_cond = cfm_sample_cfg(cfm, cond, canvas_shape=(16, 16), n_steps=150, cfg_scale=3.0)
+    rgbd_cond = rae.decoder(cfm.denormalize(z_cond).permute(0, 2, 3, 1).contiguous()).clamp(0, 1)[0]
     
-    num_random_patches = 10
-    for _ in range(num_random_patches):
-        r = torch.randint(2, grid-3, (1,)).item()
-        c = torch.randint(2, grid-3, (1,)).item()
-        mask[:, r:r+2, c:c+2, :] = 1.0
-        
-    mask_seq = mask.reshape(1, -1, 1)
+    decoded = [rgbd_uncond, rgbd_cond]
+    titles = ["Unconditional Generation", "Conditioned Generation (CFG=3.0)"]
     
-    z_pred = cfm_sample(cfm, z_real, mask_seq, n_steps=150)
-    
-    rgbd_real = rae.decoder(cfm.denormalize(z_real.reshape(1, grid, grid, -1))).clamp(0, 1)[0]
-    rgbd_pred = rae.decoder(cfm.denormalize(z_pred.reshape(1, grid, grid, -1))).clamp(0, 1)[0]
-    
-    pixel_mask = F.interpolate(mask.permute(0, 3, 1, 2), size=rgbd_real.shape[1:], mode='nearest')[0]
-    rgbd_masked = rgbd_real * pixel_mask
-    
-    decoded = [rgbd_real, rgbd_masked, rgbd_pred]
-    titles = ["Ground Truth", "Scattered Conditioning", "CFM Generation"]
-    
-    fig = plt.figure(figsize=(10, 6))
-    gs = gridspec.GridSpec(2, 3, wspace=0.05, hspace=0.05)
+    fig = plt.figure(figsize=(8, 6))
+    gs = gridspec.GridSpec(2, 2, wspace=0.05, hspace=0.05)
     
     for i, (img, title) in enumerate(zip(decoded, titles)):
         ax = fig.add_subplot(gs[0, i])
@@ -275,45 +236,41 @@ def generate_fig2_conditional(rae, cfm, real_latent, device, out_dir):
         
     plt.savefig(out_dir / "fig2_conditional.pdf")
     plt.close()
- 
+
 @torch.no_grad()
 def generate_fig3_trajectory(rae, cfm, device, out_dir):
-    """Visualizes the clean manifold target vector field predictions over time."""
+    """Visualizes the predicted endpoint z_1 trajectories over integration steps."""
     print("Generating Figure 3 (ODE Trajectory Prediction)...")
     
-    b, L, D = 1, cfm.cfg.grid_size**2, cfm.cfg.latent_dim
-    z_t = torch.randn(b, L, D, device=device)
+    B, C, H, W = 1, cfm.latent_dim, 16, 16
+    z_t = torch.randn(B, C, H, W, device=device)
+    null_cond = cfm.null_cond.unsqueeze(0).to(device)
     
     steps = 150
-    t_vals = torch.linspace(0, 1, steps, device=device)
+    ts = torch.linspace(0, 1, steps + 1, device=device)
+    dt = ts[1] - ts[0]
     
-    save_idx = [0, steps//4, steps//2, 3*steps//4, steps-1]
+    save_idx = [0, steps // 4, steps // 2, 3 * steps // 4, steps - 1]
     saved_z = []
- 
-    dummy_mask = torch.zeros(b, L, 1, device=device)
-    dummy_z_known = torch.zeros_like(z_t)
- 
+
     for i in range(steps):
-        t = t_vals[i] * torch.ones(b, device=device)
-        v_pred = cfm(z_t, t, dummy_mask, dummy_z_known)
+        t_cur = ts[i].expand(B)
+        v_pred = cfm(z_t, t_cur, null_cond)
         
-        z_1_pred = z_t + (1.0 - t_vals[i]) * v_pred
+        z_1_pred = z_t + (1.0 - ts[i]) * v_pred
         
         if i in save_idx:
             saved_z.append(z_1_pred.clone())
             
-        z_t = z_t + v_pred * (1.0 / steps)
- 
-    if (steps - 1) not in save_idx:
-        saved_z.append(z_1_pred.clone())
- 
-    grid = cfm.cfg.grid_size
+        z_t = z_t + v_pred * dt
+
     fig = plt.figure(figsize=(12, 4))
     gs = gridspec.GridSpec(2, len(saved_z), wspace=0.02, hspace=0.02)
     
     for i, z in enumerate(saved_z):
-        rgbd = rae.decoder(cfm.denormalize(z.reshape(1, grid, grid, -1))).clamp(0, 1)[0]
-        t_val = save_idx[i] / steps if i < len(save_idx) else 1.0
+        fused = cfm.denormalize(z).permute(0, 2, 3, 1).contiguous()
+        rgbd = rae.decoder(fused).clamp(0, 1)[0]
+        t_val = save_idx[i] / steps
         
         ax_rgb = fig.add_subplot(gs[0, i])
         ax_rgb.imshow(rgbd[:3].permute(1, 2, 0).cpu().numpy())
@@ -326,15 +283,15 @@ def generate_fig3_trajectory(rae, cfm, device, out_dir):
         
     plt.savefig(out_dir / "fig3_trajectory.pdf")
     plt.close()
- 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--rae-ckpt", type=str, required=True)
     parser.add_argument("--cfm-ckpt", type=str, required=True)
     parser.add_argument("--cache-dir", type=str)
     parser.add_argument("--out-dir", type=str, default="figures_paper")
-    parser.add_argument("--window-overlap", type=float, default=0.1, help="Overlap ratio for hybrid multi-diffusion tiles")
-    parser.add_argument("--avg-end-t", type=float, default=1.0, help="Time to switch from averaging to hard-overwrite in hybrid multi-diffusion")
+    parser.add_argument("--window-overlap", type=float, default=0.1, help="Overlap ratio for MultiDiffusion tiles")
+    parser.add_argument("--avg-end-t", type=float, default=1.0, help="Time to switch in MultiDiffusion")
     parser.add_argument("--num-images", type=int, default=1, help="Number of diverse panorama images to generate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
@@ -345,25 +302,21 @@ if __name__ == "__main__":
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
- 
+
     rae, cfm = load_models(args.rae_ckpt, args.cfm_ckpt, device)
- 
+
     latents_mm = None
     real_latent = None
-    try:
-        latents_path = Path(args.cache_dir) / "latents.npy"
-        latents_mm = np.load(latents_path, mmap_mode="r")
-        real_latent = torch.from_numpy(np.array(latents_mm[0])).float()
-    except Exception as e:
-        print(f"Warning: Could not load real latents from {args.cache_dir}: {e}")
-        latents_mm = None
+    if args.cache_dir:
+        try:
+            latents_path = Path(args.cache_dir) / "latents.npy"
+            latents_mm = np.load(latents_path, mmap_mode="r")
+            real_latent = torch.from_numpy(np.array(latents_mm[0])).float().reshape(-1, 768).mean(0, keepdim=True)
+        except Exception as e:
+            print(f"Warning: Could not load real latents from {args.cache_dir}: {e}")
+            latents_mm = None
     
     for num_image in range(args.num_images):
         generate_fig1_panorama(rae, cfm, latents_mm, device, out_dir, args.window_overlap, args.avg_end_t, num_image)
-    # generate_fig3_trajectory(rae, cfm, device, out_dir)
- 
-    # if real_latent is not None:
-    #     generate_fig2_conditional(rae, cfm, real_latent, device, out_dir)
- 
+
     print(f"Success! Optimized assets and figures compiled to {out_dir}")
- 
