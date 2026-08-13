@@ -1,6 +1,21 @@
+<div align="center">
+
 # BenthicFlow
 
-**Generating Extensible Underwater Environments via Flow Matching** · *ECCV 2026, Marine Vision Workshop*
+### Generating Extensible Underwater Environments via Flow Matching — *ECCV 2026, Marine Vision Workshop*
+
+[![ECCV 2026](https://img.shields.io/badge/ECCV-2026-6A5ACD.svg)](#citation)
+[![arXiv](https://img.shields.io/badge/arXiv-%20-B31B1B.svg)](#citation)
+![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?style=flat&logo=python&logoColor=white)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C.svg?logo=pytorch&logoColor=white)](environment.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](#license)
+
+BenthicFlow is a unified generative pipeline for benthic (seafloor) environments. A **single conditional flow matching model** jointly synthesizes aligned RGB and depth, and a MultiDiffusion-inspired windowed sampler extends generation to scenes of unbounded spatial extent — no separate inpainting or stitching network. Generated RGB-D mosaics are lifted into continuous 3D scenes with
+**surface-aligned Gaussian surfels**.
+
+[Paper](#citation) · [Hugging Face](https://huggingface.co/jacomof/Benthic-Flow) · [Code](https://github.com/jacomof/BenthicFlow/edit/main/README.md) · [Citation](#citation)
+
+</div>
 <!-- Fig. 1: export paper/figures/multidiffusion.pdf -> assets/multidiffusion-1.png -->
 <p align="center">
   <img src="assets/multidiffusion-1.png" width="95%" alt="Fig. 1 — BenthicFlow pipeline: reference images are encoded and interpolated into a conditioning grid; a CFM model denoises a large latent canvas in overlapping windows with trajectory averaging; the canvas is decoded to an RGBD mosaic and splatted."/>
@@ -13,13 +28,6 @@
   <br/>
   <em>Fig. 4 — Scenes generated at 32× the training resolution from four reference seeds (framed), rendered as surfel splats.</em>
 </p>
-
-BenthicFlow is a unified generative pipeline for benthic (seafloor) environments.
-A **single conditional flow matching model** jointly synthesizes aligned RGB and
-depth, and a MultiDiffusion-inspired windowed sampler extends generation to
-scenes of unbounded spatial extent — no separate inpainting or stitching network.
-Generated RGB-D mosaics are lifted into continuous 3D scenes with
-**surface-aligned Gaussian surfels**.
 
 **Contributions** (paper, Sec. 1):
 
