@@ -322,5 +322,6 @@ Imagery from public [Squidle+](https://squidle.org) collections of the IMOS AUV
 Journal of Photogrammetry and Remote Sensing*, 2025), whose codebase is
 vendored in [dpf_net/](dpf_net/) together with its upstream citation. Also
 built on DINOv2, Depth-Anything-V2, gsplat, and the RAE and MultiDiffusion
-formulations.
+formulations. We would like to extend our gratitude to the authors and maintainers
+of these very valuable codebases.
 
