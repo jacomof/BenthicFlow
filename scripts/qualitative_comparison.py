@@ -60,13 +60,17 @@ ROW_LABELS = [
     "Benthic-\nFlow-DPF\n(Ours)",
 ]
 
-CFM_CKPT = CKPT_ROOT / "unet_cfm_final" / "best_model.pt"
+CFM_CKPT = CKPT_ROOT / "cfm" / "best_model.pt"
+if not CFM_CKPT.exists():
+    CFM_CKPT = CKPT_ROOT / "unet_cfm_final" / "best_model.pt"
 RAE_CKPT = CKPT_ROOT / "rae" / "last.pt"
 # BenthicFlow-DPF checkpoints live under the dpf-variant root (what REEF would
 # resolve as CKPT_ROOT with REEF_VARIANT=dpf; this process stays base-variant,
 # so spell it out).
 CKPT_ROOT_DPF = SCRATCH_ROOT / "checkpoints-dpf"
-CFM_CKPT_DPF = CKPT_ROOT_DPF / "unet_cfm_final_dpf" / "best_model.pt"
+CFM_CKPT_DPF = CKPT_ROOT_DPF / "cfm" / "best_model.pt"
+if not CFM_CKPT_DPF.exists():
+    CFM_CKPT_DPF = CKPT_ROOT_DPF / "unet_cfm_final_dpf" / "best_model.pt"
 RAE_CKPT_DPF = CKPT_ROOT_DPF / "rae" / "last.pt"
 
 OUT_DIR = FIG_ROOT / "qualitative_comparison"

@@ -22,7 +22,7 @@ from scripts.test_panorama import sample_conditioning
 from scripts.train_cfm_cfg import load_rae_frozen
 
 # ----------------------------------------------------------------------------- #
-CFM_RUN_NAME = "unet_cfm_final"
+CFM_RUN_NAME = "cfm" if (CKPT_ROOT / "cfm" / "best_model.pt").exists() else "unet_cfm_final"
 RAE_CKPT = CKPT_ROOT / "rae" / "last.pt"
 GRID = 16
 DECODER_UPSAMPLE = 14

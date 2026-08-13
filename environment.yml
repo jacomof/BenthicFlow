@@ -1,7 +1,7 @@
 # Exported from the working env with: conda env export -n ocean2 --no-builds
 # Create with:  mamba env create -f environment.yml
 # NOTE: gsplat is intentionally NOT listed here -- it must be compiled
-# against this env's torch on a GPU node: sbatch slurm/setup/install_gsplat.sh
+# against this env's torch (e.g. bash scripts/install_gsplat_local.sh or sbatch launch_scripts/setup/install_gsplat.sh)
 name: ocean2
 channels:
   - conda-forge

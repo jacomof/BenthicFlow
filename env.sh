@@ -1,7 +1,6 @@
-# env.sh -- shared configuration sourced by every SLURM job script.
+# env.sh -- shared environment configuration sourced by all scripts and jobs.
 #
-# Convention: submit all jobs FROM THE REPOSITORY ROOT, e.g.
-#   sbatch slurm/train/train_rae_ddp.sh
+# Convention: run scripts or submit SLURM jobs FROM THE REPOSITORY ROOT
 # so that this file resolves and PROJECT_ROOT defaults to the repo root.
 
 # Conda/mamba environment name (create it from environment.yml).
@@ -11,22 +10,20 @@ export CURRENT_ENV="ocean2"
 export PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
 export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$PROJECT_ROOT"
 
-# Fast shared scratch holding the preprocessed dataset (features/, depth/,
-# rgb/) and checkpoints/. EDIT THESE for your cluster / username.
-export BENTHICFLOW_SCRATCH_ROOT="/scratch-shared/$USER/benthicflow/"
-export BENTHICFLOW_DATA_SCRATCH_ROOT="/scratch-shared/$USER/benthicflow/data/"
+# Fast shared scratch / repo root holding the preprocessed dataset (features/, depth/,
+# rgb/) and checkpoints/. Defaults to the repository root.
+export BENTHICFLOW_SCRATCH_ROOT="${BENTHICFLOW_SCRATCH_ROOT:-$PROJECT_ROOT}"
+export BENTHICFLOW_DATA_SCRATCH_ROOT="${BENTHICFLOW_DATA_SCRATCH_ROOT:-$PROJECT_ROOT/data}"
 export REEF_SCRATCH_ROOT="$BENTHICFLOW_SCRATCH_ROOT"
 export REEF_DATA_SCRATCH_ROOT="$BENTHICFLOW_DATA_SCRATCH_ROOT"
 
-# Node-local scratch: jobs submitted with --constraint=scratch-node copy the
-# dataset here for fast sequential reads (jobs that read from shared scratch
-# instead simply re-point this at BENTHICFLOW_SCRATCH_ROOT).
-export BENTHICFLOW_SCRATCH_NODE_ROOT="${TMPDIR:-/tmp}/$USER/benthicflow/node/"
+# Node-local scratch: defaults to REEF_SCRATCH_ROOT for local execution, or custom scratch if set.
+export BENTHICFLOW_SCRATCH_NODE_ROOT="${BENTHICFLOW_SCRATCH_NODE_ROOT:-$BENTHICFLOW_SCRATCH_ROOT}"
 export REEF_SCRATCH_NODE_ROOT="$BENTHICFLOW_SCRATCH_NODE_ROOT"
 
-# Model caches, kept off $HOME because of its small quota. EDIT for your user.
-export HF_HOME="/scratch-shared/$USER/hf_models"
-export TORCH_HOME="/scratch-shared/$USER/torch_models"
+# Model caches, stored in .cache/ inside the repository root by default.
+export HF_HOME="${HF_HOME:-$PROJECT_ROOT/.cache/huggingface}"
+export TORCH_HOME="${TORCH_HOME:-$PROJECT_ROOT/.cache/torch}"
 
 # Secrets live in an untracked env.local.sh, NEVER in this file:
 #   HF_TOKEN       -- HuggingFace token for gated models (FLUX baselines)
