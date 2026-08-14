@@ -11,6 +11,7 @@ __pycache__/
 *.bin
 *.safetensors
 checkpoints/
+checkpoints-dpf/
 weights/
 pretrained/
 
@@ -41,3 +42,7 @@ Thumbs.db
 logs/
 *.log
 wandb/
+
+# Heavy visualizations
+figs/
+figs-dpf/

@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
+from torchvision import transforms
+from torchvision.transforms import functional as TF
 
 from benthicflow import CKPT_ROOT, FIG_ROOT
 from models.unet_cfm import UNetCFM
@@ -38,50 +41,119 @@ from scripts.test_panorama import FEAT_SRC, RGB_SRC, sample_conditioning
 from scripts.train_cfm_cfg import load_rae_frozen
 
 CORNERS = ["TL", "TR", "BL", "BR"]
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+DINO_NATIVE_SIZE = 518
+DINO_PATCH_SIZE = 14
+DINO_GRID = DINO_NATIVE_SIZE // DINO_PATCH_SIZE  # 37
 
 
-def resolve_seed_path(path_str):
-    """Image path (.../CAMPAIGN/DEPLOYMENT/IMAGE.jpg) -> (campaign, deployment,
-    idx), resolving the frame index from the {deployment}_keys.npy filename
-    index (written at feature extraction; its row order is shared by the RGB,
-    DINO and depth arrays -- the same mapping CSVSplitDataset relies on)."""
-    p = Path(path_str)
-    if len(p.parts) < 3:
-        sys.exit(
-            f"Seed path '{path_str}' too short: need .../CAMPAIGN/DEPLOYMENT/IMAGE"
-        )
-    campaign, deployment, name = p.parts[-3], p.parts[-2], p.name
-    keys_npy = FEAT_SRC / campaign / f"{deployment}_keys.npy"
-    if not keys_npy.exists():
-        sys.exit(f"No keys index for {campaign}/{deployment}: {keys_npy}")
-    keys = np.load(keys_npy)
-    hits = np.nonzero(keys == name)[0]
-    if hits.size == 0:
-        sys.exit(
-            f"'{name}' not found in {keys_npy.name} ({keys.size} frames); "
-            f"was the image rejected at extraction?"
-        )
-    idx = int(hits[0])
-    print(f"  resolved {name} -> {campaign}/{deployment}[{idx}]")
-    return campaign, deployment, idx
+def is_image_path(spec: str) -> bool:
+    """Check if the seed spec points to an image file or has an image extension."""
+    p = Path(spec)
+    return p.suffix.lower() in IMAGE_EXTENSIONS or p.is_file()
 
 
-def parse_seed_spec(spec):
-    """Corner-seed spec -> (campaign, deployment, idx). Three forms:
-    * an image path ending in .jpg/.jpeg/.png (frame index looked up in the
-      deployment's keys file -- no need to know the row index);
-    * 'CAMPAIGN/DEPLOYMENT[IDX]' (explicit frame);
-    * 'CAMPAIGN/DEPLOYMENT' (idx None -> well-exposed random frame)."""
+def load_dinov2(variant: str = "dinov2_vitb14", device: str = "cuda"):
+    """Load DINOv2 model for on-the-fly feature extraction (matching scripts/extract_features.py)."""
+    print(f"Loading DINOv2 ({variant}) on {device}...")
+    model = torch.hub.load("facebookresearch/dinov2", variant)
+    return model.eval().to(device)
+
+
+@torch.no_grad()
+def extract_dino_features(img, dino_model, device):
+    """Extract DINOv2 patch-token grid natively at 518x518 and pool to a 768-dim
+    conditioning vector, matching scripts/extract_features.py."""
+    tfm = transforms.Compose(
+        [
+            transforms.Resize(DINO_NATIVE_SIZE, antialias=True),
+            transforms.CenterCrop(DINO_NATIVE_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+            ),
+        ]
+    )
+    x = tfm(img).unsqueeze(0).to(device)
+    out = dino_model.forward_features(x)
+    patch = out["x_norm_patchtokens"]  # [1, N, D]
+    B, N, D = patch.shape
+    assert N == DINO_GRID * DINO_GRID, (
+        f"expected {DINO_GRID * DINO_GRID} patches, got {N}"
+    )
+    cond = patch.mean(dim=1).float()  # [1, 768]
+    return cond
+
+
+def load_seed_image(
+    image_path: Path,
+    dino_model,
+    device,
+    campaign_name: str | None = None,
+    white_thr: float = 0.9,
+    black_thr: float = 0.1,
+    min_std: float = 0.03,
+):
+    """Load a raw image file, extract its DINOv2 feature conditioning on the fly
+    (matching scripts/extract_features.py), and return (rgb_t, cond, sid)."""
+    p = Path(image_path)
+    if not p.exists():
+        sys.exit(f"Seed image not found: {p}")
+    try:
+        pil_img = Image.open(p).convert("RGB")
+    except Exception as e:
+        sys.exit(f"Failed to open seed image {p}: {e}")
+
+    rgb_np = np.asarray(pil_img, dtype=np.float32) / 255.0
+    bright, contrast = float(rgb_np.mean()), float(rgb_np.std())
+    bad = bright > white_thr or bright < black_thr or contrast < min_std
+    note = "  (WARNING: fails exposure gates)" if bad else ""
+
+    camp = campaign_name or (
+        p.parts[-3]
+        if len(p.parts) >= 3
+        else (p.parts[-2] if len(p.parts) >= 2 else p.stem)
+    )
+    sid = f"{camp}/{p.parts[-2]}/{p.name}" if len(p.parts) >= 3 else p.name
+    print(f"  [raw image] {sid} bright={bright:.3f} std={contrast:.3f}{note}")
+
+    cond = extract_dino_features(pil_img, dino_model, device)
+    rgb_t = TF.to_tensor(pil_img)
+    return rgb_t, cond, sid
+
+
+def parse_seed_spec(spec: str) -> dict:
+    """Corner-seed spec -> dictionary describing seed source. Two forms:
+    * an image file path (raw image from which DINOv2 features are extracted on the fly);
+    * 'CAMPAIGN/DEPLOYMENT[IDX]' (explicit frame from pre-extracted arrays) or
+      'CAMPAIGN/DEPLOYMENT' (idx None -> well-exposed random frame)."""
     spec = spec.strip()
-    if spec.lower().endswith((".jpg", ".jpeg", ".png")):
-        return resolve_seed_path(spec)
+    if is_image_path(spec):
+        p = Path(spec)
+        if not p.exists():
+            sys.exit(f"Seed image file not found: '{spec}'")
+        campaign = (
+            p.parts[-3]
+            if len(p.parts) >= 3
+            else (p.parts[-2] if len(p.parts) >= 2 else p.stem)
+        )
+        sid = f"{campaign}/{p.parts[-2]}/{p.name}" if len(p.parts) >= 3 else p.name
+        return dict(kind="image", path=p, campaign=campaign, seed_id=sid)
+
     m = re.match(r"^([^/]+)/([^\[\]]+?)(?:\[(\d+)\])?$", spec)
     if not m:
         sys.exit(
-            f"Bad --seeds spec '{spec}': expected an image path, "
+            f"Bad --seeds spec '{spec}': expected an image file path, "
             f"CAMPAIGN/DEPLOYMENT, or CAMPAIGN/DEPLOYMENT[IDX]"
         )
-    return m.group(1), m.group(2), (int(m.group(3)) if m.group(3) else None)
+    return dict(
+        kind="deployment",
+        campaign=m.group(1),
+        deployment=m.group(2),
+        idx=(int(m.group(3)) if m.group(3) else None),
+        seed_id=None,
+    )
 
 
 def load_seed(
@@ -354,12 +426,17 @@ def parse_args():
         metavar=("TL", "TR", "BL", "BR"),
         default=None,
         help="pin the corner seeds explicitly. Each spec is either "
-        "a path to the reference image (data_normalized/"
-        "CAMPAIGN/DEPLOYMENT/IMG.jpg; the frame index is "
-        "resolved automatically via the deployment's keys "
-        "file), or CAMPAIGN/DEPLOYMENT[IDX] (IDX optional -> "
-        "well-exposed random frame from that deployment). "
+        "a path to a raw image file (from which DINOv2 features "
+        "are extracted on the fly), or CAMPAIGN/DEPLOYMENT[IDX] "
+        "(IDX optional -> well-exposed random frame from that deployment). "
         "Overrides --campaigns.",
+    )
+    p.add_argument(
+        "--dino-variant",
+        type=str,
+        default="dinov2_vitb14",
+        help="DINOv2 backbone variant for feature extraction from raw images "
+        "(default: dinov2_vitb14).",
     )
     # generation (hero defaults: dense overlap, full ODE budget)
     p.add_argument("--n", type=int, default=4)
@@ -488,7 +565,7 @@ def main():
         specs = None
         if args.seeds is not None:
             specs = [parse_seed_spec(s) for s in args.seeds]
-            campaigns = [c for c, _, _ in specs]
+            campaigns = [s["campaign"] for s in specs]
             if args.campaigns is not None:
                 print("NOTE: --seeds given; --campaigns is ignored.")
         elif args.campaigns is not None:
@@ -497,12 +574,18 @@ def main():
             sys.exit(
                 "ERROR: pass --campaigns TL TR BL BR (random seed per "
                 "campaign) or --seeds TL TR BL BR (pinned "
-                "CAMPAIGN/DEPLOYMENT[IDX]) when generating."
+                "CAMPAIGN/DEPLOYMENT[IDX] or image paths) when generating."
             )
         if len(set(campaigns)) < 4:
             print("WARNING: corners are not all distinct campaigns:", campaigns)
 
+        # Load DINOv2 model if any seed is a raw image file
+        dino_model = None
+        if specs is not None and any(s["kind"] == "image" for s in specs):
+            dino_model = load_dinov2(args.dino_variant, device)
+
         print("Loading CFM + RAE ...")
+        print(f"--CFM checkpoint: {CKPT_ROOT / CFM_RUN_NAME / 'best_model.pt'}")
         model = UNetCFM().to(device)
         model.load_state_dict(
             torch.load(
@@ -520,8 +603,23 @@ def main():
         seeds_hwc, conds, seed_ids = {}, [], []
         for k, (corner, camp) in enumerate(zip(CORNERS, campaigns)):
             if specs is not None:
+                spec = specs[k]
                 print(f"  loading pinned {corner} seed:")
-                seed, cond, sid = load_seed(*specs[k], rng, device)
+                if spec["kind"] == "image":
+                    seed, cond, sid = load_seed_image(
+                        spec["path"],
+                        dino_model,
+                        device,
+                        campaign_name=camp,
+                    )
+                else:
+                    seed, cond, sid = load_seed(
+                        spec["campaign"],
+                        spec["deployment"],
+                        spec["idx"],
+                        rng,
+                        device,
+                    )
             else:
                 print(f"  sampling {corner} seed from {camp}")
                 seed, cond = sample_conditioning(camp, rng, device)

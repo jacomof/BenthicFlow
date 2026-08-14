@@ -1,6 +1,11 @@
 #!/bin/bash
 # install_gsplat_local.sh -- Install gsplat CUDA extension for local / non-SLURM environments.
 
+export CUDAHOSTCXX=/usr/bin/g++-12
+export CC=/usr/bin/gcc-12
+export CXX=/usr/bin/g++-12
+export MAX_JOBS=2
+
 set -eo pipefail
 
 # ----------------------------- CONFIG ---------------------------------------
@@ -50,9 +55,14 @@ fi
 export MAX_JOBS
 
 banner "4/5  Compile + install gsplat from source"
-pip uninstall -y gsplat || true
-pip install -U ninja setuptools wheel
-pip install -v --no-build-isolation --no-cache-dir "$GSPLAT_SRC"
+# 1. Clone gsplat
+git clone https://github.com/nerfstudio-project/gsplat.git
+cd gsplat
+# 2. Fix the error directly in ProjectionEWA3DGSFused.cu
+# We replace 'cuda::ceil_div(a, b)' with standard integer division '(a + b - 1) / b'
+sed -i 's/::cuda::ceil_div<int64_t>(\([^,]*\),\s*\([^)]*\))/(\1 + \2 - 1) \/ \2/g' gsplat/cuda/csrc/*.cu
+# 4. Install local fixed repo
+pip install . --no-build-isolation
 
 banner "5/5  Verify gsplat installation"
 if ! python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
@@ -79,3 +89,5 @@ PY
 echo
 echo "================  SUCCESS in ${SECONDS}s  ================"
 echo "gsplat build verified! You can now run 3D lifting scripts."
+
+rm -rf gsplat  # Clean up source directory after successful build

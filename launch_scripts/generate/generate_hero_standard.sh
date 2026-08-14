@@ -31,19 +31,6 @@ python scripts/lift_panorama_hero.py \
   "$PROJECT_ROOT/data_normalized/ScottReef201503/r20150328_000850_03_scott_grids_deep_auv4_shifted/PR_20150328_015302_331_LC16.jpg" \
   "$PROJECT_ROOT/data_normalized/ScottReef201503/r20150329_231742_07_scott_grids_deep_auv3/PR_20150330_024337_271_LC16.jpg" \
   "$PROJECT_ROOT/data_normalized/ScottReef201503/r20150329_231742_07_scott_grids_deep_auv3/PR_20150330_030032_274_LC16.jpg" \
-  --steps 500 --stride 4 --cfg 3 --temperature 1.0 \
+  --steps 500 --stride 6 --cfg 3 --temperature 1.0 \
   --n 6 --pin-corners --cond-gamma 2 \
   --experiment-label ScottReefRockyBlues \
-# --cond-jitter 0.2 --jitter-seed 0 
-
-#   --campaigns Hawaii201801 Batemans201211 Batemans201011 ScottReef201108 \
-  # "$PROJECT_ROOT/data_normalized/ScottReef201108/r20110811_222428_08_scott_grids_deep_auv2/PR_20110811_223048_974_LC16.jpg" \
-  # "$PROJECT_ROOT/data_normalized/ScottReef201108/r20110811_222428_08_scott_grids_deep_auv2/PR_20110811_223239_984_LC16.jpg" \
-  # "$PROJECT_ROOT/data_normalized/ScottReef201108/r20110811_222428_08_scott_grids_deep_auv2/PR_20110811_232618_291_LC16.jpg" \
-  # "$PROJECT_ROOT/data_normalized/ScottReef201108/r20110811_222428_08_scott_grids_deep_auv2/PR_20110811_233014_310_LC16.jpg" \
-
-# $PROJECT_ROOT/data_normalized/ScottReef201503/r20150328_000850_03_scott_grids_deep_auv4_shifted/PR_20150328_032748_933_LC16.jpg -> 76
-# $PROJECT_ROOT/data_normalized/ScottReef201503/r20150328_000850_03_scott_grids_deep_auv4_shifted/PR_20150328_015302_331_LC16.jpg -> 56
-# $PROJECT_ROOT/data_normalized/ScottReef201503/r20150329_231742_07_scott_grids_deep_auv3/PR_20150330_024337_271_LC16.jpg -> 57
-# $PROJECT_ROOT/data_normalized/ScottReef201503/r20150329_231742_07_scott_grids_deep_auv3/PR_20150330_030032_274_LC16.jpg -> 20
-# 
