@@ -43,10 +43,10 @@ BenthicFlow is a unified generative pipeline for benthic (seafloor) environments
 | Stage (paper) | What happens | Code |
 |---|---|---|
 | **d-RAE** (Sec. 3) | Frozen DINOv2-B/14 encodes RGB; a depth ViT trained from scratch encodes depth; per-token LayerNorm fuses both into a 1024-d latent; a convolutional decoder reconstructs RGB-D | `models/rae.py`, trained by `scripts/train_rae_ddp.py` |
-| **Conditioning** (Sec. 3.1) | Reference seeds are mean-pooled into global appearance descriptors and bilinearly interpolated into a conditioning grid | `scripts/lift_panorama_hero.py` |
+| **Conditioning** (Sec. 3.1) | Reference seeds are mean-pooled into global appearance descriptors and bilinearly interpolated into a conditioning grid | `scripts/lift_panorama_3d.py` |
 | **Conditional flow matching** (Sec. 3.2) | Rectified flow with classifier-free guidance (`p_uncond` 0.1, scale 3); U-Net velocity field over 16×16×1024 latent windows | `models/unet_cfm.py`, trained by `scripts/train_cfm_cfg.py` |
-| **Extensible sampling** (Sec. 3.2) | Overlapping windows denoised concurrently; guided velocities averaged per token under a sine window (62.5 % overlap optimum, Fig. 3a) | sampler in `scripts/lift_panorama_hero.py` / `scripts/test_panorama.py` |
-| **3D lifting** (Sec. 3.3) | Pixels unprojected to surfels oriented by local depth gradients; anchored appearance-only refinement | `scripts/lift_panorama_3d.py`, `scripts/lift_panorama_single.py` |
+| **Extensible sampling** (Sec. 3.2) | Overlapping windows denoised concurrently; guided velocities averaged per token under a sine window (62.5 % overlap optimum, Fig. 3a) | sampler in `scripts/lift_panorama_3d.py` / `scripts/test_panorama.py` |
+| **3D lifting** (Sec. 3.3) | Pixels unprojected to surfels oriented by local depth gradients; anchored appearance-only refinement | `scripts/lift_panorama_single.py` / `scripts/lift_panorama_3d.py`, `scripts/lift_panorama_hero.py` (they do both generation and lifting) |
 
 Two preprocessing variants are modeled (Sec. 2): **BenthicFlow** — CLAHE
 exposure normalization + Depth-Anything-V2 relative depth — and
