@@ -19,7 +19,7 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 
-from benthicflow import CKPT_ROOT, FIG_ROOT
+from benthicflow import CKPT_ROOT, FIG_ROOT, VARIANT
 from models.unet_cfm import UNetCFM
 from scripts.lift_panorama_3d import (
     CFM_RUN_NAME,
@@ -43,7 +43,7 @@ from scripts.train_cfm_cfg import load_rae_frozen
 CORNERS = ["TL", "TR", "BL", "BR"]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
-DINO_NATIVE_SIZE = 518
+DINO_NATIVE_SIZE = 266 if VARIANT == "dpf" else 518
 DINO_PATCH_SIZE = 14
 DINO_GRID = DINO_NATIVE_SIZE // DINO_PATCH_SIZE  # 37
 

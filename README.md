@@ -7,7 +7,7 @@
 [![ECCV 2026](https://img.shields.io/badge/ECCV-2026-6A5ACD.svg)](#citation)
 [![arXiv](https://img.shields.io/badge/arXiv-%20-B31B1B.svg)](#citation)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?style=flat&logo=python&logoColor=white)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C.svg?logo=pytorch&logoColor=white)](environment.yml)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.11-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](#license)
 
 BenthicFlow is a unified generative pipeline for benthic (seafloor) environments. A **single conditional flow matching model** jointly synthesizes aligned RGB and depth, and a MultiDiffusion-inspired windowed sampler extends generation to scenes of unbounded spatial extent — no separate inpainting or stitching network. Generated RGB-D mosaics are lifted into continuous 3D scenes with
@@ -104,10 +104,25 @@ Runs on any Unix-like system (Linux/macOS) with Python and GPU compute (single G
 
 **1. Clone and create the environment:**
 
+The CUDA compiler NVCC version 12.8 is a requirement to install the project's dependencies due to gsplat. To install
+it, follow the official [instructions](https://developer.nvidia.com/cuda-12-8-0-download-archive?target_os=Linux&target_arch=x86_64&Distribution=WSL-Ubuntu&target_version=2.0&target_type=deb_local) by NVIDIA. libglm-dev is also a requirement, it can be installed 
+with `sudo apt install libglm-dev`.
+
 ```bash
+# Ensures that the correct NVCC and g++ versions are used to build gsplat
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH=/usr/local/cuda-12.8/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH
+export CUDAHOSTCXX=/usr/bin/g++-12
+export CC=/usr/bin/gcc-12
+export CXX=/usr/bin/g++-12
+export MAX_JOBS=2 # Ensures RAM usage doesn't blow up due to too many compilation jobs
+
 git clone <this-repo> BenthicFlow && cd BenthicFlow
-conda env create -n ocean2 --file environment.yml     # creates env "ocean2" (or: mamba env create -n ocean2 --file environment.yml)
+conda create -n ocean2 python=3.12.13    # creates env "ocean2"
 conda activate ocean2
+pip install -r requirements.txt # install general dependencies
+pip install git+https://github.com/nerfstudio-project/gsplat.git --no-build-isolation # install gsplat
 mkdir -p logs                                         # execution logs land here
 ```
 
@@ -167,15 +182,14 @@ echo 'export HF_TOKEN=hf_...'   >> env.local.sh   # gated models (FLUX.2 baselin
 echo 'export SQUIDLE_TOKEN=...' >> env.local.sh   # optional, faster downloads
 ```
 
-**5. (Only for 3D surfel splatting / lifting)** Install `gsplat` separately against your environment's PyTorch:
+**4. Validate Installation:** to make sure all dependencies were installed correctly and all files are in place,
+you can run one of the environment generation scripts for the teaser figures. It should generate an rgb canvas
+and a .ply gaussian splatting scene file you can visualize with [SuperSplat](https://superspl.at/editor):
 
 ```bash
-# Option A: Local Unix environment
-bash scripts/install_gsplat_local.sh
-
-# Option B: SLURM cluster environment
-sbatch launch_scripts/setup/install_gsplat.sh
-```
+conda activate ocean2
+bash launch_scripts/generate/generate_hero_standard.sh
+``` 
 
 ### Running scripts & jobs
 
@@ -183,7 +197,6 @@ sbatch launch_scripts/setup/install_gsplat.sh
 
 ```bash
 # Option A: Run directly via bash / python locally
-source env.sh
 bash launch_scripts/eval/test_generation.sh
 
 # Option B: Submit to a SLURM cluster
@@ -240,21 +253,18 @@ DDP jobs automatically detect if a separate node-local scratch (`BENTHICFLOW_SCR
 
 | Job | What it does |
 |---|---|
-| `generate_hero.sh` (+ `_batemans`, `_hawaii`, `_scott_*`) | Four-corner-conditioned panoramas with provenance (Fig. 4 scenes); saves the RGB-D blob `hero_rgbd.pt` |
+| `generate_hero.sh` | Generates four-corner-conditioned panoramas and .ply scene |
 | `lift_panorama.sh` | Lift a single RGB image (see `assets/`) into a 2.5D surfel splat |
 | `generate_3d.sh` | RGB(-D) frame → point cloud / splat |
 | `flux_generation.sh` | FLUX img2img reef variations |
 | `find_colorful_refs.sh` | Rank frames by colourfulness to pick panorama seeds |
-
-The hero scripts reference specific frames under
-`$PROJECT_ROOT/data_normalized/` — these exist once the data pipeline has run.
 
 ### 5 · Figures (`launch_scripts/figures/`)
 
 | Job | Paper | What it does |
 |---|---|---|
 | `panorama_tsne.sh` | Fig. 3b | t-SNE of DINOv2 window embeddings along a two-seed interpolation |
-| `gen_figures.sh` | — | Assembles paper figures from checkpoints → `figures_paper/` |
+| `gen_figures.sh` | — | Debug script to showcase different interpolation effects |
 | `pca.sh` | — | Patch-level latent maps (PCA-RGB) per deployment |
 
 <!-- Fig. 3: export paper/figures/stitching_seam_ratio.pdf and paper/figures/panorama_tsne.pdf -> assets/fig3a_sgr.png / assets/fig3b_tsne.png -->
@@ -295,6 +305,7 @@ Run in order (after the raw Squidle+ pull from step 1):
 | `train_cfm_ddp_cfg.sh` | U-Net CFM with CFG on the DPF latents (`unet_cfm_final_dpf`) |
 | `test_generation.sh` | FID / KID / cosine similarity + depth consistency (Tab. 1 & 3, DPF rows) |
 | `knn_campaign_classifier.sh` | k-NN location classifier (Tab. 2, DPF row) |
+| `generate_hero_dpf.sh` | Generates four-corner-conditioned panoramas and .ply scene |
 
 The vendored [dpf_net/](dpf_net/) directory is the upstream
 [DPF-Net](https://github.com/OUCVisionGroup/DPF-Net) codebase
@@ -302,6 +313,11 @@ The vendored [dpf_net/](dpf_net/) directory is the upstream
 `clean_and_extract.py`, the glue that batch-processes reef campaigns. Upstream
 model weights (`DPF-Net.pth`, `DPEM_finetune.pth`, `depth_anything_v2_vits.pth`)
 are downloaded per `dpf_net/README.md` and are gitignored.
+
+### 7 · Scene Visualization
+
+The generated .ply gaussian splatting files can be examined and rendered using a gaussian splatting viewer. The rendered views in
+the paper were generated using [SuperSplat](https://superspl.at/editor).
 
 ## Conventions
 
